@@ -1,0 +1,17 @@
+#!/usr/bin/env sh
+
+connected=$(xrandr -q | grep ' connected' | wc -l)
+enabled=$(xrandr -q | grep '\*' | wc -l)
+
+if [[ "$connected" -ne 2 ]]; then
+    echo "Only $connected outputs connected, can't toggle display"
+    exit 1
+fi
+
+if [[ "$enabled" == "1" ]]; then
+    echo "Enabling VGA monitor to the right of laptop"
+    xrandr --output LVDS1 --auto --pos 0x0 --output VGA1 --auto --right-of LVDS1
+elif [[ "$enabled" == "2" ]]; then
+    echo "Disabling VGA output"
+    xrandr --output LVDS1 --auto --output VGA1 --off
+fi
