@@ -14,6 +14,7 @@ Filename                     Description
 ``monitor-right-of-laptop``  Toggles expanding the desktop to the right via VGA
 ``vga-disable``              Disable the VGA port
 ``vga-only``                 Enable VGA port, display LVDS display
+``fix_annex.sh``             Fix symlinks in a git annex
 ===========================  ================
 
 License
