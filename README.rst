@@ -15,6 +15,7 @@ Filename                     Description
 ``vga-disable``              Disable the VGA port
 ``vga-only``                 Enable VGA port, display LVDS display
 ``fix_annex.sh``             Fix symlinks in a git annex
+``90-duplicity``             Backup cron job
 ===========================  ================
 
 License

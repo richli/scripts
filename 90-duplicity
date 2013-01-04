@@ -1,0 +1,94 @@
+#!/usr/bin/env sh
+
+# Backup script using duplicity
+# Suitable for arch and debian
+# Used on amonkira, leto, aralakh
+
+##############
+HOST=$(hostname)
+MAILTO=$HOST@dranek.com
+VOLSIZE="16" # MiB
+
+# Do a full backup every month, no encryption, etc
+DUP_BAK_OPTS="--full-if-older-than 1M --volsize $VOLSIZE --asynchronous-upload --exclude-other-filesystems"
+DUP_ALL_OPTS="--log-file /var/log/duplicity.log --no-encryption"
+DEST_DIR=/home/dup_bak
+DEST_LOCAL="file:///$DEST_DIR"
+
+# NB: Remember that openssh-sftp-server needs to be installed on morannon
+MORANNON_LIP="192.168.1.1" # local IP for morannon
+##############
+
+
+# Redirect all output to the logfile (for mailing)
+LOGFILE=$(mktemp)
+exec > $LOGFILE 2>&1
+# Email output upon exit
+trap "mail -s 'duplicity daily backup' $MAILTO < $LOGFILE; rm -f $LOGFILE" EXIT
+
+echo "##############"
+echo "Duplicity daily backup on $HOST, $(date)"
+
+# Ensure backup directory exists
+mkdir -p $DEST_DIR
+
+# First see if morannon is up
+ping -c1 $MORANNON_LIP -q > /dev/null
+if [[ $? -eq 0 ]]; then
+    DEST_REMOTE="sftp://root@morannon//tmp/mnt/silver/dup_baks/$HOST"
+    echo "morannon is up, we're at home"
+else
+    DEST_REMOTE="sftp://root@caladan.us.to:2235//tmp/mnt/silver/dup_baks/$HOST"
+    echo "we're not at home, using remote address for morannon"
+fi
+
+# Backup package info
+if [[ $HOST == "amonkira" || $HOST == "leto" ]]; then
+    pacman -Qe | sort > /var/backup/pacman-db-explicit
+    pacman -Qm | sort > /var/backup/pacman-db-foreign
+elif [[ $HOST == "aralakh" ]]; then
+    echo "TODO: backup apt database"
+else
+    echo "ERROR: host is $HOST, unknown"
+fi
+
+# Duplicity backups
+bak_name=('root' 'home')
+bak_root=('/' '/home')
+bak_glob_list=(
+    "--exclude-globbing-filelist /etc/.dupignore"
+    "--exclude-globbing-filelist /home/earl/.dupignore"
+)
+
+for bak_i in "${!bak_name[@]}"; do
+    echo "##############"
+    echo "Backing up ${bak_name[bak_i]}"
+    echo "##############"
+
+    set -x
+    ## Cleanup partial backups
+    #duplicity cleanup --force $DUP_ALL_OPTS --name ${bak_name[bak_i]} $DEST_REMOTE/${bak_name[bak_i]}
+
+    # Backup to local directory
+    duplicity $DUP_ALL_OPTS $DUP_BAK_OPTS --name ${bak_name[bak_i]} ${bak_glob_list[bak_i]} ${bak_root[bak_i]} $DEST_LOCAL/${bak_name[bak_i]}
+
+    # Cleanups
+    #duplicity remove-all-but-n-full 2 $DUP_ALL_OPTS --name ${bak_name[bak_i]} --force $DEST_REMOTE/${bak_name[bak_i]}
+    duplicity remove-all-but-n-full 2 $DUP_ALL_OPTS --name ${bak_name[bak_i]} $DEST_REMOTE/${bak_name[bak_i]}
+
+    # Info
+    duplicity collection-status $DUP_ALL_OPTS --name ${bak_name[bak_i]} $DEST_REMOTE/${bak_name[bak_i]}
+
+    # List files
+    set +x
+    cmd="duplicity list-current-files $DUP_ALL_OPTS --name ${bak_name[bak_i]} $DEST_REMOTE/${bak_name[bak_i]}"
+    echo -e "\nFYI: To list current files"
+    echo -e "Command: $cmd\n"
+    #$cmd
+    
+    # Restore files
+    cmd="duplicity $DUP_ALL_OPTS --file-to-restore earl/mers/git/ascat_highres file:///mnt/melange/dup_baks/$HOST/home restore/ascat_highres"
+    echo -e "\nFYI: Example to restore files"
+    echo -e "Command: $cmd\n"
+    #$cmd
+done
