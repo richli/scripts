@@ -1,4 +1,4 @@
-#!/usr/bin/env sh
+#!/usr/bin/env bash
 
 # Backup script using duplicity
 # Suitable for arch and debian
