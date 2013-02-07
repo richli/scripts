@@ -40,16 +40,10 @@ def main():
         print("{} mails present".format(mail_count))
         search_ret = mers.search(None, "All")
 
-        # Loop through messages, mark deleted
+        # Mark all messages as deleted
         if search_ret[0] == "OK":
-            msgnums = search_ret[1][0].decode().split(" ")
-            msg_count = 0
-            for msg in msgnums:
-                print("\rMarking {} deleted".format(msg), end=' ')
-                del_ret = mers.store(msg, "+FLAGS", "\\Deleted")
-                msg_count += 1
-                if msg_count > 2000:
-                    break
+            #msgnums = search_ret[1][0].decode().split(" ")
+            del_ret = mers.store("1:*", "+FLAGS", "\\Deleted")
 
         # Expunge mailbox, close it
         ret = mers.expunge()
