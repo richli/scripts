@@ -1,0 +1,141 @@
+#!/usr/bin/env bash
+
+# Syncs melange directories with morannon
+
+# There are two approaches to doing this:
+# 1) FUSE-mount encfs on top of sshfs, then rsync locally to the encfs/sshfs filesystem which points to ilos
+# 2) Reverse-encfs to a local folder and then rsync those contents to ilos
+
+# Option (2) probably has less overhead (no sshfs needed)
+# A benefit of option (1) is that rsync progress is meaningful (non-encrypted filenames) and if I needed to manually add/delete files, it's easy to copy the FUSE commands and get a local directory that maps to ilos
+# Option (1) is used below
+
+# Note: I have to log in as root on ilos so that I can set owner/group permissions correctly. Otherwise I'm limited to earl/earl on ilos.
+
+# http://serverfault.com/questions/160014/encrypted-remote-backups-via-rsync?rq=1
+
+
+##############
+HOST=$(hostname)
+MAILTO=$HOST@dranek.com
+set -o errexit # exits if any statements dont return true
+##############
+
+ilos_sshfs='/mnt/melange/backups/ilos-sshfs'
+ilos_encfs='/mnt/melange/backups/ilos-encfs'
+morannon_local='/mnt/melange/backups/morannon'
+#ilos_rev_encfs='/mnt/melange/backups/ilos-rev_encfs'
+
+#ENCFS="encfs -i 30 -S --reverse -o ro"
+ENCFS="encfs -i 30 -S"
+encfs_pass="XXXXXX"
+
+#RSYNC='rsync -ha --delete-delay --stats --whole-file'
+RSYNC='rsync -ha -iv --delete --stats'
+
+##############
+# Helper functions
+print_title() {
+    # $1: What to print
+    echo " "
+    echo "##########"
+    echo "$1"
+    echo "##########"
+}
+
+print_header() {
+    # $1: What to print
+    echo " "
+    echo "##########"
+    echo "$1"
+}
+
+sshfs_mount() {
+    set -x
+    mkdir -p "$ilos_sshfs"
+    #sshfs -o idmap=user -o allow_root -o gid=0 earl@ilos.dranek.com:/home/earl/dranek-bak/ "$ilos_sshfs" || exit 1
+    sshfs -o allow_root root@ilos.dranek.com:/root/dranek-bak/ "$ilos_sshfs" || exit 1
+    set +x
+}
+
+sshfs_umount() {
+    fusermount -u "$ilos_sshfs" && rm -r "$ilos_sshfs"
+}
+
+encfs_mount() {
+    set -x
+    mkdir -p "$ilos_encfs"
+    echo $encfs_pass | $ENCFS "$ilos_sshfs" "$ilos_encfs" || exit 1
+    set +x
+}
+
+encfs_umount() {
+    fusermount -u "$ilos_encfs" && rm -r "$ilos_encfs"
+}
+
+rev_encfs_mount() {
+    set -x
+    mkdir -p "$ilos_rev_encfs"
+    echo $encfs_pass | $ENCFS "$morannon_local" "$ilos_rev_encfs" || exit 1
+    set +x
+}
+
+rev_encfs_umount() {
+    fusermount -u "$ilos_rev_encfs" && rm -r "$ilos_rev_encfs"
+}
+
+rsync_morannon() {
+    #dirs=('git' 'morannon_logs' 'pictures' 'dup_baks' 'obn_baks')
+    # TODO: Also do leto's obn_bak (it's not in the same directory as here)
+    echo "NOTE: Not all directories are synced yet"
+    dirs=('git' 'morannon_logs' 'pictures')
+    for dir in "${dirs[@]}"; do
+        echo "--------------------"
+        echo "rsync-ing $dir to ilos"
+        echo "--------------------"
+        set -x
+        mkdir -p $ilos_encfs/morannon/"$dir"
+        time $RSYNC $morannon_local/"$dir" $ilos_encfs/morannon
+        set +x
+    done
+}
+
+# This is the rev-encfs version
+#rsync_morannon() {
+#    time $RSYNC "$ilos_rev_encfs" root@ilos.dranek.com:/root/dranek-bak
+#}
+
+cleanup() {
+    set +x
+    #print_header "Reverse-unmounting encfs"
+    #rev_encfs_umount
+    print_header "Unmounting encfs"
+    encfs_umount
+    print_header "Unmounting sshfs"
+    sshfs_umount
+    sed -i 's/\r$//' $LOGFILE; mail -s 'sync leto with ilos' $MAILTO < $LOGFILE && rm -f $LOGFILE
+}
+##############
+
+##############
+# Redirect all output to the logfile (for mailing)
+LOGFILE=$(mktemp)
+exec > $LOGFILE 2>&1
+# Email output upon exit
+trap cleanup EXIT
+##############
+
+print_title "Sync melange with ilos, $HOST, $(date)"
+
+#print_header "Reverse-mounting encfs"
+#rev_encfs_mount
+
+print_header "Mounting sshfs"
+sshfs_mount
+
+print_header "Mounting encfs"
+encfs_mount
+
+print_header "Rsyncing morannon backup"
+rsync_morannon
+
