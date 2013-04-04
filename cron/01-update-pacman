@@ -1,0 +1,20 @@
+#!/usr/bin/env sh
+
+HOST=$(hostname)
+MAILTO=$HOST@dranek.com
+LOGFILE=/var/log/pacman-cron.log
+LOGNAME=pacman-cron
+
+# Redirect all output to a temp logfile (for mailing) (this is an addition to writing to $LOGFILE)
+TEMPLOG=$(mktemp)
+#echo "Output in $TEMPLOG"
+exec > $TEMPLOG 2>&1
+
+# Email output upon exit
+trap "mail -s '$LOGNAME' $MAILTO < $TEMPLOG; rm -f $TEMPLOG" EXIT
+
+echo "##############"
+echo "$LOGNAME, $(date)"
+#. /etc/profile && (echo; date; yes | pacman -Syuqw) &>> $LOGFILE || (echo 'pacman failed!'; tail $LOGFILE; false)
+. /etc/profile && (echo "##############"; date; yes | pacman -Syuqw) 2>&1 | tee -a $LOGFILE || (echo 'pacman failed!'; false)
+
