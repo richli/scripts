@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+
+# Backup script using obnam
+
+##############
+HOST=$(hostname)
+MAILTO=$HOST@dranek.com
+set -o errexit # exits if any statements dont return true
+
+LOCAL_REPO=/home/obn_bak
+BAK_OPTS="--one-file-system"
+##############
+
+obn_backup() {
+    local excludes
+    excludes=$(printf " --exclude=%s" "${BAK_EXCLUDE[@]}")
+
+    set -x
+    obnam --repository $LOCAL_REPO $BAK_OPTS $excludes backup "${BAK_DIRS[@]}"
+    set +x
+}
+
+obn_diff() {
+    local cur_genid
+    cur_genid=$(obnam --repository $LOCAL_REPO genids | tail -n 1)
+
+    # Because this command can take awhile to complete, I won't run it every time, but I'll print what the command should be to run it
+    echo "obnam --repository $LOCAL_REPO diff $cur_genid"
+}
+
+print_title() {
+    # $1: What to print
+    echo " "
+    echo "##########"
+    echo "$1"
+    echo "##########"
+    echo " "
+}
+
+print_header() {
+    # $1: What to print
+    echo " "
+    echo "##########"
+    echo "$1"
+    echo " "
+}
+
+cleanup() {
+    # Email output upon exit, remove carriage returns (added in if script is cancelled early)
+    sed -i 's/\r$//' $LOGFILE; mail -s 'obnam daily backup' $MAILTO < $LOGFILE && rm -f $LOGFILE
+}
+
+
+# Redirect all output to the logfile (for mailing)
+LOGFILE=$(mktemp)
+exec > $LOGFILE 2>&1
+trap cleanup EXIT
+
+print_title "Obnam daily backup on $HOST, $(date)"
+
+# Define backup info
+BAK_DIRS=('/home/earl' '/etc' '/usr/lib/systemd')
+BAK_EXCLUDE=( $( < /home/earl/.obn-exclude ) )
+echo "${#BAK_EXCLUDE[@]} excludes loaded"
+
+print_header "Saving pacman packages"
+pacman -Qe | sort > /var/backup/pacman-db-explicit
+pacman -Qm | sort > /var/backup/pacman-db-foreign
+
+print_header "Backing up"
+obn_backup
+
+print_header "Obnam generations"
+obnam --repository $LOCAL_REPO generations
+
+print_header "Generation diff"
+obn_diff
+
+print_header "Forgetting old generations"
+set -x
+obnam --repository $LOCAL_REPO forget --keep=4h,7d,5w --pretend
+set +x
+
+print_header "Repository size"
+du -sh $LOCAL_REPO
+
+print_header "How to restore files"
+echo "obnam --repository $LOCAL_REPO restore [--generation=\$gen_id] --to=\$restore_dir [\$file]"
+
+print_header "How to view files stored, sorted by size"
+echo "sudo obnam --repository $LOCAL_REPO ls \$gen_id | sort -k 5 -n -r | less"
+
