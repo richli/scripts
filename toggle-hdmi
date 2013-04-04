@@ -1,0 +1,34 @@
+#!/usr/bin/env sh
+
+connected=($(xrandr -q | grep ' connected' | awk '{print $1}'))
+enabled_num=$(xrandr -q | grep '\*' | wc -l)
+
+echo $connected
+echo ${connected[@]}
+if [[ "${#connected[@]}" -ne 2 ]]; then
+    echo "Only $connected outputs connected, can't toggle display"
+    # Force LVDS only
+    xrandr --output LVDS1 --auto --output HDMI1 --off
+    exit 1
+fi
+
+# Is HDMI connected?
+hdmi_mode="off"
+for output in "${connected[@]}"; do
+    if [[ "$output" == HDMI1 ]]; then
+        hdmi_mode="on"
+    fi
+done
+
+if [[ $hdmi_mode == "off" ]]; then
+    echo "HDMI not connected, maybe you mean VGA?"
+    exit 1
+fi
+
+if [[ "$enabled_num" == "1" ]]; then
+    echo "Enabling HDMI output to the right of laptop"
+    xrandr --output LVDS1 --auto --pos 0x0 --output HDMI1 --auto --right-of LVDS1
+elif [[ "$enabled_num" == "2" ]]; then
+    echo "Disabling HDMI output"
+    xrandr --output LVDS1 --auto --output HDMI1 --off
+fi
