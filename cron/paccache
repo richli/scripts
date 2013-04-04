@@ -1,0 +1,19 @@
+#!/usr/bin/env sh
+
+HOST=$(hostname)
+MAILTO=$HOST@dranek.com
+LOGNAME=paccache
+
+# Redirect all output to a temp logfile (for mailing)
+TEMPLOG=$(mktemp)
+#echo "Output in $TEMPLOG"
+exec > $TEMPLOG 2>&1
+
+# Email output upon exit
+trap "mail -s '$LOGNAME' $MAILTO < $TEMPLOG && rm -f $TEMPLOG" EXIT
+
+echo "##############"
+echo "$LOGNAME, $(date)"
+echo " "
+su earl -c "paccache -dv"
+
