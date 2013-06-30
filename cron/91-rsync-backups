@@ -1,0 +1,62 @@
+#!/usr/bin/env sh
+
+##############
+HOST=$(hostname)
+MAILTO=$HOST@dranek.com
+SRC_DIR=/home/obn_bak
+#set -o errexit # exits if any statements dont return true
+##############
+
+# http://mywiki.wooledge.org/BashFAQ/050
+sync_files() {
+    # Rsync all obnam files
+    # $1: source directory
+    # $PLACE needs to be defined, it's either "home" or "remote"
+    RSYNC_ARGS="--human-readable --archive --stats --delete"
+    #RSYNC_ARGS="--itemize-changes --human-readable --archive --partial --stats --verbose --delete"
+    #RSYNC_ARGS="--itemize-changes --times --partial"
+    if [[ "$PLACE" == "home" ]]; then
+        DEST="root@morannon:/tmp/mnt/silver/obn_baks/amonkira"
+        PORT="22" # ssh port
+    elif [[ "$PLACE" == "remote" ]]; then
+        DEST="root@caladan.us.to:/tmp/mnt/silver/obn_baks/amonkira"
+        PORT="2235" # ssh port
+    fi
+
+    # Rsync everything to morannon
+    set -x
+    time rsync $RSYNC_ARGS -e "ssh -p $PORT" $1 $DEST
+    set +x
+}
+
+cleanup() {
+    # NB: I have to remove the \r character that happens when the script is cancelled (SIGINT etc), otherwise mailx sends it as application/octet-stream instead of plain text.
+    sed -i 's/\r$//' $LOGFILE; mail -s 'obnam rsync' $MAILTO < $LOGFILE && rm -f $LOGFILE
+}
+
+# Redirect all output to the logfile (for mailing)
+LOGFILE=$(mktemp)
+exec > $LOGFILE 2>&1
+
+# Email output upon exit
+trap cleanup EXIT
+
+echo "##############"
+echo "Obnam rsync to silver, $(date)"
+
+# First see if morannon is up
+ping -c1 192.168.1.1 -q > /dev/null
+if [[ $? -eq 0 ]]; then
+    PLACE="home"
+    echo "morannon is up, we're at home"
+else
+    PLACE="remote"
+    echo "we're not at home, using remote address for morannon"
+fi
+
+echo "##############"
+echo "Syncing $SRC_DIR"
+echo "##############"
+
+sync_files "$SRC_DIR"
+

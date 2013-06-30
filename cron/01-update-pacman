@@ -11,7 +11,7 @@ TEMPLOG=$(mktemp)
 exec > $TEMPLOG 2>&1
 
 # Email output upon exit
-trap "mail -s '$LOGNAME' $MAILTO < $TEMPLOG; rm -f $TEMPLOG" EXIT
+trap "mail -s '$LOGNAME' $MAILTO < $TEMPLOG; rm -f $TEMPLOG" SIGINT SIGTERM EXIT
 
 echo "##############"
 echo "$LOGNAME, $(date)"
