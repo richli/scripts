@@ -1,0 +1,94 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%PREAMBLE
+\RequirePackage[l2tabu,orthodox]{nag}
+\documentclass[12pt,landscape]{article}
+
+%%% General
+\usepackage{fixltx2e}
+
+%%% Graphics
+\usepackage[pdftex]{graphicx}
+\usepackage[letterpaper,inner=1.5cm,outer=1.5cm,top=1.5cm,bottom=1.5cm,pdftex,landscape]{geometry}
+
+%%% Header/footer
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\fancyhf{}
+\renewcommand{\headrulewidth}{0pt}
+\renewcommand{\footrulewidth}{0pt}
+%\fancyfoot[C]{\thepage}
+\fancyfoot[R]{\scriptsize{commit \gitAbbrevHash, \gitAuthorIsoDate}}
+
+%%% Math
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage[all,error]{onlyamsmath}
+
+%%% Fonts
+\usepackage{lmodern}
+\usepackage[T1]{fontenc}	% not needed with IEEEtrans
+\usepackage{type1ec}		% not needed with IEEEtrans
+
+%%% Typography and text
+\usepackage{microtype}      % load AFTER fonts
+\usepackage{gitinfo}
+\usepackage{siunitx}
+\usepackage[utf8]{inputenc}
+
+%%% Figures
+\usepackage{multicol}
+
+%%% References
+\usepackage[pdftex]{hyperref} %for PDF viewing
+\hypersetup{pdfauthor={richli},pdftitle={Wifi Info},colorlinks=false,hidelinks,bookmarksnumbered=true,pdfstartview=FitH,pdfpagemode={UseNone},pdfstartpage=1}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Macros
+\newenvironment{Figure}
+  {\par\medskip\noindent\minipage{\linewidth}}
+  {\endminipage\par\medskip}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{document}
+\thispagestyle{fancy} %so the fancy footer shows up on the first page
+
+\input{details} % for wifi info
+
+\begin{center}
+    {\Huge Wifi Information}
+    \rule{\textwidth}{1pt}
+\end{center}
+
+\begin{table}[h]
+    \centering
+    \begin{large}
+    \begin{tabular}{r l}
+        \textbf{SSID} & {\Large \wifissid}\\
+        \textbf{Passphrase} & {\large \wifipass}\\
+        \textbf{Security} & \wifisecfull\\
+    \end{tabular}
+    \end{large}
+\end{table}
+
+\begin{table}[h]
+    \centering
+    \begin{tabular}{c c}
+        \begin{tabular}{c}
+            \includegraphics[width=0.45\textwidth]{wifi.pdf} \\
+            %Connection information for Android devices
+        \end{tabular}
+        &
+        \begin{tabular}{r l}
+            Standard & 802.11n \\
+            Band & \SI{2.4}{\GHz} \\
+            Bandwidth & \SI{20}{\MHz} \\
+            IP version & IPv4 only \\
+            IP assignment & DHCP in use, leases for 24 hours \\
+            Gateway & 192.168.1.1
+        \end{tabular}
+        %Technical details
+    \end{tabular}
+\end{table}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\end{document}

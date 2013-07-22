@@ -1,0 +1,11 @@
+# Latex intermediates
+*.aux
+*.fdb_latexmk
+*.fls
+*.log
+*.out
+*.pdf
+# qrencode intermediates
+*.eps
+# gitinfo 
+gitHeadInfo.gin

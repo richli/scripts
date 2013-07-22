@@ -1,0 +1,7 @@
+$pdf_mode = 1;
+push @generated_exts, 'ttt', 'fff';
+$clean_ext = 'bbl';
+$pdflatex = 'pdflatex --shell-escape $O $S';
+@default_files = ('info');
+#$out_dir = 'out';
+
