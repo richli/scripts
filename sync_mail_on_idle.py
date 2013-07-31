@@ -64,15 +64,24 @@ class idle_checker(threading.Thread):
                 print("{}: Terminating thread".format(self.name))
                 break
 
-            # TODO: check idle_response. Don't need to trigger offlineimap
-            # in all cases (eg, expunge, no action, etc)
-            # But maybe I could still trigger at least an hour or something
-            # (use time module for this)
-            print(idle_response)
-            print("{}: Triggering".format(self.name))
-            idle_actor.accts.append(self.mail_acct)
-            self.trigger_event.set()
-            self.trigger_event.clear()
+            # Check idle_response. Don't need to trigger offlineimap
+            # in all cases. TODO: But maybe I could still trigger at least an
+            # hour or something (use time module for this)
+            for resp in idle_response:
+                if resp[1] in (u'RECENT', u'FETCH', u'EXPUNGE'):
+                    # recent: new mail
+                    # fetch: something about the message changed (flags, etc)
+                    # expunge: message deleted (expunged) from mailbox
+                    print("{}: Triggering due to {}".format(self.name, resp[1]))
+                    idle_actor.accts.append(self.mail_acct)
+                    self.trigger_event.set()
+                    self.trigger_event.clear()
+                elif resp[1] in (u'EXISTS', u'Still here'):
+                    # These responses don't need an offlineimap sync
+                    pass
+                else:
+                    # TODO: Any other cases happen?
+                    print("{} UNKNOWN idle response: {}".format(self.name,resp))
 
         server.logout()
 
