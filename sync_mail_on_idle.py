@@ -4,8 +4,11 @@ __author__ = 'Rich Li'
 __version__ = 0.5
 
 import sys
+import ConfigParser
 import argparse
 import threading
+
+# TODO: Use some sort of logging facility instead of current print statements?
 
 from imapclient import IMAPClient # python2-imapclient on AUR
 
@@ -119,21 +122,9 @@ def main():
     mail_info = {}
     idle_threads = []
 
-    ####
-    # TODO: Put this info in a separate config file?
-    mail_info['accts'] = ["foo", "bar"] # offlineimap account names
-    # Connect to foo
-    mail_info['foo_user'] = "foo@example.com"
-    mail_info['foo_pass'] = "nothing"
-    mail_info['foo_server'] ="mail.example.com"
-    mail_info['foo_folders'] = ["INBOX", "old", "sub/folder"]
-
-    # Connect to bar
-    mail_info['bar_user'] = "bar"
-    mail_info['bar_pass'] = "something"
-    mail_info['bar_server'] ="mail.bar.com"
-    mail_info['bar_folders'] = ["INBOX"]
-    ####
+    # Read in account info
+    cfg = ConfigParser.SafeConfigParser()
+    cfg.read('idle_mail.ini')
 
     # Create the consumer thread and its event it watches
     trigger_event = threading.Event()
@@ -142,15 +133,17 @@ def main():
     trigger_thread.start()
 
     # Create the producer threads
-    for acct in mail_info['accts']:
-        mail_user = mail_info['{}_user'.format(acct)]
-        mail_pass = mail_info['{}_pass'.format(acct)]
-        mail_server = mail_info['{}_server'.format(acct)]
-        for folder in mail_info['{}_folders'.format(acct)]:
-            thread_name='{}_{}'.format(acct, folder)
+    for acct in cfg.sections():
+        mail_user = cfg.get(acct, "user")
+        mail_pass = cfg.get(acct, "pass")
+        mail_server = cfg.get(acct, "server")
+        mail_folders = cfg.get(acct, "folders")
+
+        for folder in mail_folders.split(","):
+            thread_name='{}_{}'.format(acct, folder.strip())
             print("Spawning {}".format(thread_name))
             mail_idle = idle_checker(trigger_event, acct, mail_user,
-                    mail_pass, mail_server, folder)
+                    mail_pass, mail_server, folder.strip())
             mail_idle.name = thread_name
             idle_threads.append(mail_idle)
             mail_idle.start()
