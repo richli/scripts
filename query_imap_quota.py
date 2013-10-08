@@ -19,37 +19,48 @@ def check_imap_return(ret_msg, ok_string, bad_string):
         return False
 
 def main():
+    mail_info = []
+    
+    # Connect to MERS
+    mail_info.append({
+    'user': "xxx",
+    'pass': "xxx",
+    'server': "xxx.edu"
+    })
     # Connect to dranek
-    mail_user = "xxx"
-    mail_pass = "xxx"
-    mail_server="example.com"
+    mail_info.append({
+    'user': "xxx",
+    'pass': "xxx",
+    'server': "xxx.com"
+    })
 
-    print("Connecting to {}...".format(mail_server), end='')
-    mail = imaplib.IMAP4_SSL(mail_server)
-    ret = mail.login(mail_user, mail_pass)
-    check_imap_return(ret, "done", "Login failed")
+    for m in mail_info:
+        print("Connecting to {}...".format(m['server']), end='')
+        mail = imaplib.IMAP4_SSL(m['server'])
+        ret = mail.login(m['user'], m['pass'])
+        check_imap_return(ret, "done", "Login failed")
 
-    # Get quota info
-    ret = mail.getquotaroot("inbox")
-    check_imap_return(ret, None, "Quota lookup failed")
-    quota_parse = ret[1][1][0].decode().split(" ")
-    quota_used = int(quota_parse[3])
-    quota_total = quota_parse[4]
-    # Trim close parens off 
-    quota_total = int(quota_total.rstrip(")"))
-    print("Quota: {:0.0f}/{:0.0f} MiB {:0.0f}%".format(quota_used/1024,
-        quota_total/1024, quota_used/quota_total * 100))
+        # Get quota info
+        ret = mail.getquotaroot("inbox")
+        check_imap_return(ret, None, "Quota lookup failed")
+        quota_parse = ret[1][1][0].decode().rpartition("STORAGE")[2].strip().split(" ")
+        quota_used = int(quota_parse[0])
+        quota_total = quota_parse[1]
+        # Trim close parens off 
+        quota_total = int(quota_total.rstrip(")"))
+        print("Quota: {:0.0f}/{:0.0f} MiB {:0.0f}%".format(quota_used/1024,
+            quota_total/1024, quota_used/quota_total * 100))
 
-    #ret = mail.list()
-    #print(ret)
+        #ret = mail.list()
+        #print(ret)
 
-    ## Close mailbox
-    #ret = mail.close()
-    #check_imap_return(ret, "Mailbox closed", "Close failed")
+        ## Close mailbox
+        #ret = mail.close()
+        #check_imap_return(ret, "Mailbox closed", "Close failed")
 
-    # Logout
-    ret = mail.logout()
-    check_imap_return(ret, "Logged out", "Logout failed")
+        # Logout
+        ret = mail.logout()
+        check_imap_return(ret, "Logged out", "Logout failed")
 
 if __name__ == "__main__":
     main()
