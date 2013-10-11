@@ -1,14 +1,13 @@
 #!/usr/bin/env python2
 from __future__ import division, print_function
 __author__ = 'Rich Li'
-__version__ = 1.0
+__version__ = 1.5
 """ Monitors mail folders for changes using IDLE and then runs offlineimap
 
 The mail configuration (login details, folders) are specified with an
 ini-style config.
 
-TODO: I currently use logging from stdlib. Can I also use systemd's logging
-ability?
+TODO: If a thread gets a network error, I need to restart it
 
 """
 
@@ -116,7 +115,6 @@ class idle_checker(threading.Thread):
                     logging.info("{}: Triggering due to {}".format(self.name, resp[1]))
                     idle_actor.accts.append(self.mail_acct)
                     self.trigger_event.set()
-                    self.trigger_event.clear()
                     self.last_sync = time.time()
                 elif resp[1] in (u'FETCH', u'EXPUNGE'):
                     # fetch: something about the message changed (flags, etc)
@@ -126,7 +124,6 @@ class idle_checker(threading.Thread):
                     time.sleep(10)
                     idle_actor.accts.append(self.mail_acct)
                     self.trigger_event.set()
-                    self.trigger_event.clear()
                     self.last_sync = time.time()
                 elif resp[1] in (u'Still here'):
                     # These responses don't need an offlineimap sync
@@ -141,7 +138,6 @@ class idle_checker(threading.Thread):
                 logging.info("{}: Triggering due to timeout".format(self.name))
                 idle_actor.accts.append(self.mail_acct)
                 self.trigger_event.set()
-                self.trigger_event.clear()
                 self.last_sync = time.time()
 
         server.logout()
@@ -175,8 +171,11 @@ class idle_actor(threading.Thread):
                 cmd = ["/usr/bin/offlineimap", "-o", "-a", acct, "-k", "mbnames:enabled=no"]
                 logging.info("Calling {}".format(cmd))
                 #subprocess.Popen(cmd)
-                cmd_out = subprocess.check_output(cmd)
-                print(cmd_out)
+                # NB: offlineimap actually outputs to stderr, not stdout
+                cmd_out = subprocess.check_output(cmd, stderr=subprocess.STDOUT)
+                #print(cmd_out)
+
+            self.trigger_event.clear()
 
 def main():
     """ IDLE on certain IMAP folders 
