@@ -80,7 +80,8 @@ class idle_checker(threading.Thread):
             #print(idle_response)
             idle_done = server.idle_done()
             if len(idle_done[1:]) > 0 and len(idle_done[1]) > 0:
-                idle_response.extend(idle_done[1:])
+                idle_response.extend([i[0] for i in idle_done[1:]])
+                #print("idle_response extended", idle_done, idle_response)
             #idle_response.append(server.noop())
 
             # Check if we need to exit
