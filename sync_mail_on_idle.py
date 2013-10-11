@@ -33,7 +33,8 @@ class idle_checker(threading.Thread):
     """
 
     stop_it = False
-    def __init__(self, trigger_event, mail_acct, mail_user, mail_pass, mail_server, mail_folder):
+    def __init__(self, trigger_event, mail_acct, mail_user, mail_pass,
+            mail_server, mail_folder, timeout=None):
         """ Initializes the thread
 
         trigger_event: an event to notify that a mailcheck is needed
@@ -42,6 +43,8 @@ class idle_checker(threading.Thread):
         mail_pass: IMAP password
         mail_server: IMAP hostname (SSL is assumed yes)
         mail_folder: IMAP foldername
+        timeout: max time (in seconds) until it syncs anyway. If None, then
+        forever (so only syncs on IDLE)
 
         """
         super(idle_checker, self).__init__()
@@ -55,29 +58,32 @@ class idle_checker(threading.Thread):
 
         server = IMAPClient(mail_server, use_uid=True, ssl=True)
         #server.debug = True
-        server.login(mail_user, mail_pass)
 
         self.server = server
-        #self.timeout = 60*29 # 29 minutes
-        self.timeout = 10 # DEBUG?
+        #self.idle_timeout = 60*29 # 29 minutes
+        self.idle_timeout = 10 # DEBUG?
+
+        self.timeout = timeout
 
         self.last_sync = time.time()
         self.last_print = time.time()
 
     def run(self):
         server = self.server
+        server.login(self.mail_user, self.mail_pass)
         select_info = server.select_folder(self.mail_folder)
         while True:
             #logging.debug("{}: idling".format(self.name))
             # Display status periodically
             if (time.time() - self.last_print) / 60 >= 5 :
-                logging.info("{}: idling at {}, {:0.1f} min since last sync".format(
-                    self.name, time.strftime("%d %b %I:%M:%S"), (time.time() - self.last_sync)/60))
+                msg = "{}: idling at {}".format(self.name, time.strftime("%d %b %I:%M:%S"))
+                if self.timeout:
+                    msg += ", {:0.1f} min since last sync".format((time.time() - self.last_sync)/60)
+                logging.info(msg)
                 self.last_print = time.time()
 
             server.idle()
-            idle_response = server.idle_check(timeout=self.timeout)
-            #print(idle_response)
+            idle_response = server.idle_check(timeout=self.idle_timeout)
             idle_done = server.idle_done()
             if len(idle_done[1:]) > 0 and len(idle_done[1]) > 0:
                 idle_response.extend([i[0] for i in idle_done[1:]])
@@ -131,7 +137,7 @@ class idle_checker(threading.Thread):
                     logging.warning("{} UNKNOWN idle response: {}".format(self.name,resp))
 
             # Trigger sync anyway if it's been long enough
-            if (time.time() - self.last_sync) > 60 * 60:
+            if self.timeout != None and (time.time() - self.last_sync) > self.timeout:
                 logging.info("{}: Triggering due to timeout".format(self.name))
                 idle_actor.accts.append(self.mail_acct)
                 self.trigger_event.set()
@@ -211,11 +217,18 @@ def main():
         mail_server = cfg.get(acct, "server")
         mail_folders = cfg.get(acct, "folders")
 
-        for folder in mail_folders.split(","):
+        for folder_i, folder in enumerate(mail_folders.split(",")):
+            # Only one thread per account (not per folder) should have the
+            # timeout
+            if folder_i == 0: 
+                timeout = 30*60 # 30 minutes
+            else:
+                timeout = None
             thread_name='{}_{}'.format(acct, folder.strip())
             logging.info("Spawning {}".format(thread_name))
-            mail_idle = idle_checker(trigger_event, acct, mail_user,
-                    mail_pass, mail_server, folder.strip())
+            mail_idle = idle_checker(trigger_event, acct, 
+                    mail_user, mail_pass,
+                    mail_server, folder.strip(), timeout)
             mail_idle.name = thread_name
             idle_threads.append(mail_idle)
             mail_idle.start()
