@@ -106,7 +106,9 @@ class idle_checker(threading.Thread):
                     raise Exception("{}: Unexpected response: {}".format(self.name, resp))
 
             # Wait for further response
-            waittime = self.timeout - (time.time() - self.last_idle)
+            # (the smaller of sync timeout less time remaining in current idle
+            # command vs 5 minutes, for printing status)
+            waittime = min(self.timeout - (time.time() - self.last_idle), 5*60)
             logging.debug("{}: Idling, blocking for {:0.1f} seconds".format(self.name, waittime))
             readlist, _, _ = select.select([server.socket(), self.stop_signal], [], [], waittime)
 
