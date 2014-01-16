@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 __author__ = 'Rich Li'
-__version__ = 2.0
+__version__ = 2.1
 
 """ Monitors mail folders for changes using IDLE and then runs offlineimap
 
@@ -15,6 +15,11 @@ TODO: Don't run offlineimap for the same account if it's been less
 than a few seconds since the last account
 
 """
+
+# Version history
+# v2.0 2014-01-16: Lots of rewriting, moved to imaplib in standard library
+# v2.1 2014-01-16: Fix bug where it checked for the initial imap response more
+# than once
 
 # all stdlib imports
 import sys, os
@@ -89,16 +94,16 @@ class idle_checker(threading.Thread):
                 logging.info(msg)
                 self.last_print = time.time()
 
-            # Start IDLE if we haven't already
             if not self.last_idle:
+                # Start IDLE if we haven't already
                 logging.debug("{}: Sent IDLE command".format(self.name))
                 server.send("a IDLE\r\n".encode())
                 self.last_idle = time.time()
 
-            # Expect initial response
-            resp = server.readline().decode()
-            if not resp.startswith("+"):
-                raise Exception("Unexpected response: {}".format(resp))
+                # Expect initial response
+                resp = server.readline().decode()
+                if not resp.startswith("+"):
+                    raise Exception("{}: Unexpected response: {}".format(self.name, resp))
 
             # Wait for further response
             waittime = self.timeout - (time.time() - self.last_idle)
