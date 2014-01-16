@@ -1,27 +1,32 @@
-#!/usr/bin/env python2
-from __future__ import division, print_function
+#!/usr/bin/env python
 __author__ = 'Rich Li'
-__version__ = 1.5
+__version__ = 2.0
+
 """ Monitors mail folders for changes using IDLE and then runs offlineimap
 
-The mail configuration (login details, folders) are specified with an
-ini-style config.
+The mail configuration (login details, folders) are specified with an ini-style
+config.
+
+This only runs on Python 3, not Python 2 (tested on Python 3.3)
 
 TODO: If a thread gets a network error, I need to restart it
 
+TODO: Don't run offlineimap for the same account if it's been less
+than a few seconds since the last account
+
 """
 
-# stdlib imports
-import sys
-import time
-import subprocess
+# all stdlib imports
+import sys, os
 import argparse
+import configparser
 import threading
-import ConfigParser
 import logging
-
-# other imports
-from imapclient import IMAPClient # python2-imapclient on AUR
+import select
+import queue
+import time
+import imaplib
+import subprocess
 
 class idle_checker(threading.Thread):
     """ This checks an IMAP folder using IDLE 
@@ -31,12 +36,11 @@ class idle_checker(threading.Thread):
     
     """
 
-    stop_it = False
-    def __init__(self, trigger_event, mail_acct, mail_user, mail_pass,
-            mail_server, mail_folder, timeout=None):
+    def __init__(self, mail_queue, mail_acct, mail_user, mail_pass,
+            mail_server, mail_folder, stop_signal, name, timeout=None):
         """ Initializes the thread
 
-        trigger_event: an event to notify that a mailcheck is needed
+        mail_queue: a queue object to use when an account is triggered
         mail_acct: the offlineimap account name
         mail_user: IMAP username 
         mail_pass: IMAP password
@@ -48,31 +52,35 @@ class idle_checker(threading.Thread):
         """
         super(idle_checker, self).__init__()
 
-        self.trigger_event = trigger_event
+        self.mail_queue = mail_queue
         self.mail_acct = mail_acct
         self.mail_user = mail_user
         self.mail_pass = mail_pass
         self.mail_server = mail_server
         self.mail_folder = mail_folder
-
-        server = IMAPClient(mail_server, use_uid=True, ssl=True)
-        #server.debug = True
-
-        self.server = server
-        #self.idle_timeout = 60*29 # 29 minutes
-        self.idle_timeout = 10 # DEBUG?
-
+        self.stop_signal = stop_signal
+        self.name = name
         self.timeout = timeout
+
+        # Connect
+        self.server = imaplib.IMAP4_SSL(mail_server)
 
         self.last_sync = time.time()
         self.last_print = time.time()
+        self.last_idle = None
+        self.running = True # whether we're currently running ok
+        self.stop_it = False # whether it's time to stop and clean up
+        logging.info("Spawned {}".format(self.name))
+
+    def stop(self):
+        self.stop_it = True
 
     def run(self):
         server = self.server
         server.login(self.mail_user, self.mail_pass)
-        select_info = server.select_folder(self.mail_folder)
+        select_info = server.select(self.mail_folder)
+
         while True:
-            #logging.debug("{}: idling".format(self.name))
             # Display status periodically
             if (time.time() - self.last_print) / 60 >= 5 :
                 msg = "{}: idling at {}".format(self.name, time.strftime("%d %b %I:%M:%S"))
@@ -81,66 +89,117 @@ class idle_checker(threading.Thread):
                 logging.info(msg)
                 self.last_print = time.time()
 
-            server.idle()
-            idle_response = server.idle_check(timeout=self.idle_timeout)
-            idle_done = server.idle_done()
-            if len(idle_done[1:]) > 0 and len(idle_done[1]) > 0:
-                idle_response.extend([i[0] for i in idle_done[1:]])
-                #print("idle_response extended", idle_done, idle_response)
-            #idle_response.append(server.noop())
+            # Start IDLE if we haven't already
+            if not self.last_idle:
+                logging.debug("{}: Sent IDLE command".format(self.name))
+                server.send("a IDLE\r\n".encode())
+                self.last_idle = time.time()
+
+            # Expect initial response
+            resp = server.readline().decode()
+            if not resp.startswith("+"):
+                raise Exception("Unexpected response: {}".format(resp))
+
+            # Wait for further response
+            waittime = self.timeout - (time.time() - self.last_idle)
+            logging.debug("{}: Idling, blocking for {:0.1f} seconds".format(self.name, waittime))
+            readlist, _, _ = select.select([server.socket(), self.stop_signal], [], [], waittime)
 
             # Check if we need to exit
-            if idle_checker.stop_it:
+            if self.stop_it:
                 logging.info("{}: Terminating thread".format(self.name))
                 break
 
-            # Check idle_response. Don't need to trigger offlineimap
-            # in all cases.
-            for resp in idle_response:
-                #print(self.name, idle_response, resp)
-                #if isinstance(resp[0], (str,unicode)) and resp[0].upper().startswith("IDLE"):
-                #    continue
-                #if len(resp) < 2:
-                #    continue
-                if len(resp) < 2:
-                    logging.error("{}: resp is {}".format(self.name, resp))
-
-                # Trigger immediately for new mail
-                # For mail changes (flags, deletion), wait a little for things
-                # to settle
-                if resp[1] in (u'RECENT', u'EXISTS'):
-                    # recent: new mail
-                    # exists: number of messages in mailbox
-                    # NB: it seems dovecot uses "recent" and gmail uses "exists"
-                    logging.info("{}: Triggering due to {}".format(self.name, resp[1]))
-                    idle_actor.accts.append(self.mail_acct)
-                    self.trigger_event.set()
-                    self.last_sync = time.time()
-                elif resp[1] in (u'FETCH', u'EXPUNGE'):
-                    # fetch: something about the message changed (flags, etc)
-                    # expunge: message deleted (expunged) from mailbox
-                    # NB: while dovecot will notify on flag changes using "fetch", gmail does not
-                    logging.info("{}: Triggering (delayed) due to {}".format(self.name, resp[1]))
-                    time.sleep(10)
-                    idle_actor.accts.append(self.mail_acct)
-                    self.trigger_event.set()
-                    self.last_sync = time.time()
-                elif resp[1] in (u'Still here'):
-                    # These responses don't need an offlineimap sync
-                    #logging.info("{}: No action due to {}".format(self.name, resp[1]))
+            # Check IDLE response
+            for sock in readlist:
+                sock_msg = sock.read().decode()
+                if sock_msg.startswith("* OK"):
+                    # The IMAP server is just saying OK once in a while,
+                    # nothing's wrong
                     pass
+                elif "EXISTS" in sock_msg.split():
+                    # exists: number of messages in mailbox
+                    logging.info("{}: new mail detected ({})".format(self.name, sock_msg))
+                    self.mail_queue.put(self.mail_acct)
+                    self.last_sync = time.time()
+                elif "FETCH" in sock_msg.split():
+                    # fetch: something about the message changed (flags, etc)
+                    logging.info("{}: mail status changed ({})".format(self.name, sock_msg))
+                    self.mail_queue.put(self.mail_acct)
+                    self.last_sync = time.time()
+                elif "EXPUNGE" in sock_msg.split():
+                    # expunge: message deleted (expunged) from mailbox
+                    logging.info("{}: a mail deleted ({})".format(self.name, sock_msg))
+                    self.mail_queue.put(self.mail_acct)
+                    self.last_sync = time.time()
                 else:
-                    # TODO: Any other cases happen?
-                    logging.warning("{} UNKNOWN idle response: {}".format(self.name,resp))
+                    logging.warning("{}: I don't know how to handle this ({})".format(self.name, sock_msg))
 
-            # Trigger sync anyway if it's been long enough
-            if self.timeout != None and (time.time() - self.last_sync) > self.timeout:
-                logging.info("{}: Triggering due to timeout".format(self.name))
-                idle_actor.accts.append(self.mail_acct)
-                self.trigger_event.set()
+            # Finish IDLE if it's been long enough (28 minutes)
+            if time.time() - self.last_idle >= 28*60:
+                logging.debug("{}: Finishing IDLE command".format(self.name))
+                server.send("DONE\r\n".encode())
+                self.last_idle = None
+
+            # Sync anyway if it's been long enough
+            if (time.time() - self.last_sync) > self.timeout:
+                logging.info("{}: Triggering due to timeout exceeded ({:0.1f} minutes)".format(self.name, (time.time() - self.last_sync) / 60))
+                self.mail_queue.put(self.mail_acct)
                 self.last_sync = time.time()
 
+
+#            # Check idle_response. Don't need to trigger offlineimap
+#            # in all cases.
+#            for resp in idle_response:
+#                #print(self.name, idle_response, resp)
+#                #if isinstance(resp[0], (str,unicode)) and resp[0].upper().startswith("IDLE"):
+#                #    continue
+#                #if len(resp) < 2:
+#                #    continue
+#                if len(resp) < 2:
+#                    logging.error("{}: resp is {}".format(self.name, resp))
+#
+#                # Trigger immediately for new mail
+#                # For mail changes (flags, deletion), wait a little for things
+#                # to settle
+#                if resp[1] in (u'RECENT', u'EXISTS'):
+#                    # recent: new mail
+#                    # exists: number of messages in mailbox
+#                    # NB: it seems dovecot uses "recent" and gmail uses "exists"
+#                    logging.info("{}: Triggering due to {}".format(self.name, resp[1]))
+#                    idle_actor.accts.append(self.mail_acct)
+#                    self.trigger_event.set()
+#                    self.last_sync = time.time()
+#                elif resp[1] in (u'FETCH', u'EXPUNGE'):
+#                    # fetch: something about the message changed (flags, etc)
+#                    # expunge: message deleted (expunged) from mailbox
+#                    # NB: while dovecot will notify on flag changes using "fetch", gmail does not
+#                    logging.info("{}: Triggering (delayed) due to {}".format(self.name, resp[1]))
+#                    time.sleep(10)
+#                    idle_actor.accts.append(self.mail_acct)
+#                    self.trigger_event.set()
+#                    self.last_sync = time.time()
+#                elif resp[1] in (u'Still here'):
+#                    # These responses don't need an offlineimap sync
+#                    #logging.info("{}: No action due to {}".format(self.name, resp[1]))
+#                    pass
+#                else:
+#                    # TODO: Any other cases happen?
+#                    logging.warning("{} UNKNOWN idle response: {}".format(self.name,resp))
+#
+
+        # Get out of IDLE
+        if self.last_idle:
+            logging.debug("{}: Finishing IDLE command".format(self.name))
+            server.send("DONE\r\n".encode())
+            self.last_idle = None
+            msg = server.readline()
+
+        logging.debug("{}: Closing mailbox".format(self.name))
+        server.close()
+        logging.debug("{}: Logging out".format(self.name))
         server.logout()
+        logging.info("{}: Finished".format(self.name))
 
 class idle_actor(threading.Thread):
     """ This triggers offlineimap 
@@ -149,33 +208,34 @@ class idle_actor(threading.Thread):
     
     """
 
-    stop_it = False
-    accts = []
-    def __init__(self, trigger_event):
+    def __init__(self, idle_queue, name):
         super(idle_actor, self).__init__()
-        self.trigger_event = trigger_event
+        self.idle_queue = idle_queue
+        self.stop_it = False
+        self.name = name
+        logging.info("Spawned {}".format(self.name))
+
+    def stop(self):
+        self.stop_it = True
+        # Add a dummy item to the queue so it wakes up the thread
+        self.idle_queue.put("_stop")
 
     def run(self):
         while True:
-            self.trigger_event.wait()
-            logging.info("{}: triggered".format(self.name))
+            acct = self.idle_queue.get()
+            logging.debug("{}: got an item from the queue".format(self.name))
 
             # Check if we need to exit
-            if idle_actor.stop_it:
+            if self.stop_it:
                 logging.info("{}: Terminating thread".format(self.name))
                 break
 
             # Run offlineimap for the accounts
-            while len(idle_actor.accts) > 0:
-                acct = idle_actor.accts.pop()
-                cmd = ["/usr/bin/offlineimap", "-o", "-a", acct, "-k", "mbnames:enabled=no"]
-                logging.info("Calling {}".format(cmd))
-                #subprocess.Popen(cmd)
-                # NB: offlineimap actually outputs to stderr, not stdout
-                cmd_out = subprocess.check_output(cmd, stderr=subprocess.STDOUT)
-                #print(cmd_out)
-
-            self.trigger_event.clear()
+            cmd = ["/usr/bin/offlineimap", "-o", "-a", acct, "-k", "mbnames:enabled=no"]
+            logging.info("Calling {}".format(cmd))
+            # NB: offlineimap actually outputs to stderr, not stdout
+            cmd_out = subprocess.check_output(cmd, stderr=subprocess.STDOUT)
+            #print(cmd_out)
 
 def main():
     """ IDLE on certain IMAP folders 
@@ -199,14 +259,16 @@ def main():
             )
 
     # Read in account info
-    cfg = ConfigParser.SafeConfigParser()
+    cfg = configparser.ConfigParser()
     cfg.read('idle_mail.ini')
 
     # Create the consumer thread and its event it watches
-    trigger_event = threading.Event()
-    trigger_thread = idle_actor(trigger_event)
-    trigger_thread.name = "idle-actor"
+    mail_queue = queue.Queue()
+    trigger_thread = idle_actor(mail_queue, "oimap_trigger")
     trigger_thread.start()
+
+    # Create a self pipe, it's used as a signal to the producer threads
+    pipe_signal = os.pipe2(os.O_NONBLOCK)
 
     # Create the producer threads
     idle_threads = []
@@ -215,24 +277,16 @@ def main():
         mail_pass = cfg.get(acct, "pass")
         mail_server = cfg.get(acct, "server")
         mail_folders = cfg.get(acct, "folders")
+        timeout = 10*60 # Check at least once every 10 minutes
 
         for folder_i, folder in enumerate(mail_folders.split(",")):
-            # Only one thread per account (not per folder) should have the
-            # timeout
-            if folder_i == 0: 
-                timeout = 30*60 # 30 minutes
-            else:
-                timeout = None
             thread_name='{}_{}'.format(acct, folder.strip())
-            logging.info("Spawning {}".format(thread_name))
-            mail_idle = idle_checker(trigger_event, acct, 
-                    mail_user, mail_pass,
-                    mail_server, folder.strip(), timeout)
-            mail_idle.name = thread_name
+            mail_idle = idle_checker(mail_queue, acct, mail_user, mail_pass,
+                    mail_server, folder.strip(), pipe_signal[0], thread_name, timeout)
             idle_threads.append(mail_idle)
             mail_idle.start()
 
-    # Run threads, but watch for SIGINT and terminate gracefully
+    # Watch for SIGINT and terminate gracefully
     try:
         while True:
             for thread in idle_threads:
@@ -241,10 +295,12 @@ def main():
                     # not infinite (ie, no arg)
                     thread.join(60) 
     except (KeyboardInterrupt, SystemExit):
-        logging.info("Signaling stop_it to the threads")
-        idle_checker.stop_it = idle_actor.stop_it = True
-        trigger_event.set() # so trigger_thread (idle_actor) wakes up
-        sys.exit()
+        logging.debug("Signaling stop_it to the threads")
+        trigger_thread.stop()
+        for t in idle_threads:
+            t.stop()
+        os.write(pipe_signal[1], "stop".encode())
+        #sys.exit()
 
 if __name__ == "__main__":
     main()
