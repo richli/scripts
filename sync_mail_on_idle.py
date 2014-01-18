@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 __author__ = 'Rich Li'
-__version__ = 2.2
+__version__ = 2.3
 
 """ Monitors mail folders for changes using IDLE and then runs offlineimap
 
@@ -13,7 +13,6 @@ TODO
 ----
 
 * If a thread gets a network error or otherwise dies, I need to restart it
-* Don't run offlineimap for the same account if it's been less than a few seconds since the last sync for that account
 
 """
 
@@ -21,6 +20,7 @@ TODO
 # v2.0 2014-01-16: Lots of rewriting, moved to imaplib in standard library
 # v2.1 2014-01-16: Fix bug where it checked for the initial imap response more
 # v2.2 2014-01-17: Fix bugs with timing out properly
+# v2.3 2014-01-17: Don't trigger the same account too many times too quickly
 
 # all these are from stdlib
 import sys, os
@@ -226,6 +226,13 @@ class idle_actor(threading.Thread):
         self.idle_queue = idle_queue
         self.stop_it = False
         self.name = name
+        # If the same account is triggered multiple times quickly (e.g.,
+        # multiple folders within the same account have updates), then this
+        # ignores subsequent triggers for a time period of remember_time (in
+        # seconds). last_sync is a dict that keeps track of the last time each
+        # account was synced.
+        self.remember_time = 15  # seconds
+        self.last_sync = {} 
         logging.info("Spawned {}".format(self.name))
 
     def stop(self):
@@ -243,12 +250,21 @@ class idle_actor(threading.Thread):
                 logging.info("{}: Terminating thread".format(self.name))
                 break
 
-            # Run offlineimap for the accounts
-            cmd = ["/usr/bin/offlineimap", "-o", "-a", acct, "-k", "mbnames:enabled=no"]
-            logging.info("Calling {}".format(cmd))
-            # NB: offlineimap actually outputs to stderr, not stdout
-            cmd_out = subprocess.check_output(cmd, stderr=subprocess.STDOUT)
-            #print(cmd_out)
+            # Check if it's been long enough for this account to trigger
+            now = time.time()
+            acct_time = self.last_sync.get(acct, now - self.remember_time - 10)
+
+            if (now - acct_time) > self.remember_time:
+                # Run offlineimap for the accounts
+                cmd = ["/usr/bin/offlineimap", "-o", "-a", acct, "-k", "mbnames:enabled=no"]
+                logging.info("Calling {}".format(cmd))
+                # NB: offlineimap actually outputs to stderr, not stdout
+                cmd_out = subprocess.check_output(cmd, stderr=subprocess.STDOUT)
+                #print(cmd_out)
+                self.last_sync[acct] = now
+            else:
+                logging.debug("{}: won't trigger {:0.1f} since it was {} seconds from the last time it triggered".format(self.name, acct, now - acct_time))
+
 
 def main():
     """ IDLE on certain IMAP folders 
