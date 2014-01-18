@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 __author__ = 'Rich Li'
-__version__ = 2.1
+__version__ = 2.2
 
 """ Monitors mail folders for changes using IDLE and then runs offlineimap
 
@@ -9,19 +9,20 @@ config.
 
 This only runs on Python 3, not Python 2 (tested on Python 3.3)
 
-TODO: If a thread gets a network error, I need to restart it
+TODO
+----
 
-TODO: Don't run offlineimap for the same account if it's been less
-than a few seconds since the last account
+* If a thread gets a network error or otherwise dies, I need to restart it
+* Don't run offlineimap for the same account if it's been less than a few seconds since the last sync for that account
 
 """
 
 # Version history
 # v2.0 2014-01-16: Lots of rewriting, moved to imaplib in standard library
 # v2.1 2014-01-16: Fix bug where it checked for the initial imap response more
-# than once
+# v2.2 2014-01-17: Fix bugs with timing out properly
 
-# all stdlib imports
+# all these are from stdlib
 import sys, os
 import argparse
 import configparser
@@ -87,12 +88,13 @@ class idle_checker(threading.Thread):
 
         while True:
             # Display status periodically
-            if (time.time() - self.last_print) / 60 >= 5 :
+            now = time.time()
+            if (now - self.last_print) >= 5*60 :
                 msg = "{}: idling at {}".format(self.name, time.strftime("%d %b %I:%M:%S"))
                 if self.timeout:
-                    msg += ", {:0.1f} min since last sync".format((time.time() - self.last_sync)/60)
+                    msg += ", {:0.1f} min since last sync".format((now - self.last_sync)/60)
                 logging.info(msg)
-                self.last_print = time.time()
+                self.last_print = now
 
             if not self.last_idle:
                 # Start IDLE if we haven't already
@@ -106,10 +108,18 @@ class idle_checker(threading.Thread):
                     raise Exception("{}: Unexpected response: {}".format(self.name, resp))
 
             # Wait for further response
-            # (the smaller of sync timeout less time remaining in current idle
-            # command vs 5 minutes, for printing status)
-            waittime = min(self.timeout - (time.time() - self.last_idle), 5*60)
-            logging.debug("{}: Idling, blocking for {:0.1f} seconds".format(self.name, waittime))
+            # (the smaller of time left until sync timeout, time remaining in current idle
+            # command, and time left until next status print)
+            now = time.time()
+            until_print = now - self.last_print
+            until_sync = now - self.last_sync
+            until_idle = now - self.last_idle
+            waittime = min(self.timeout - until_sync, 28*60 - until_idle, 5*60 - until_print)
+            logging.debug("{}: time since issued IDLE is {:0.1f} minutes, since last sync is {:0.1f} minutes".format(self.name, until_idle/60, until_sync/60))
+            if waittime < 0:
+                logging.warning("{}: waittime is < 0, time since last idle is {:0.1f} seconds".format(self.name, now - self.last_idle))
+                waittime = 10
+            logging.debug("{}: Idling, waiting for {:0.1f} min".format(self.name, waittime/60))
             readlist, _, _ = select.select([server.socket(), self.stop_signal], [], [], waittime)
 
             # Check if we need to exit
@@ -119,53 +129,52 @@ class idle_checker(threading.Thread):
 
             # Check IDLE response
             for sock in readlist:
-                sock_msg = sock.read().decode()
+                sock_msg = sock.read().decode().strip()
                 if sock_msg.startswith("* OK"):
                     # The IMAP server is just saying OK once in a while,
                     # nothing's wrong
-                    pass
+                    # (dovecot seems especially noisy in doing this every few
+                    # minutes)
+                    logging.debug("{}: everything is okay ({})".format(self.name, sock_msg))
                 elif "EXISTS" in sock_msg.split():
                     # exists: number of messages in mailbox
                     logging.info("{}: new mail detected ({})".format(self.name, sock_msg))
                     self.mail_queue.put(self.mail_acct)
-                    self.last_sync = time.time()
+                    self.last_sync = self.last_print = time.time()
                 elif "FETCH" in sock_msg.split():
                     # fetch: something about the message changed (flags, etc)
                     logging.info("{}: mail status changed ({})".format(self.name, sock_msg))
                     self.mail_queue.put(self.mail_acct)
-                    self.last_sync = time.time()
+                    self.last_sync = self.last_print = time.time()
                 elif "EXPUNGE" in sock_msg.split():
                     # expunge: message deleted (expunged) from mailbox
                     logging.info("{}: a mail deleted ({})".format(self.name, sock_msg))
                     self.mail_queue.put(self.mail_acct)
-                    self.last_sync = time.time()
+                    self.last_sync = self.last_print = time.time()
                 else:
-                    logging.warning("{}: I don't know how to handle this ({})".format(self.name, sock_msg))
+                    logging.error("{}: I don't know how to handle this ({})".format(self.name, sock_msg))
+                    break
 
             # Finish IDLE if it's been long enough (28 minutes)
             if time.time() - self.last_idle >= 28*60:
                 logging.debug("{}: Finishing IDLE command".format(self.name))
                 server.send("DONE\r\n".encode())
                 self.last_idle = None
+                resp = server.readline().decode()
+                # The response is probably something like "OK IDLE terminated"
+                # but why bother checking it
 
             # Sync anyway if it's been long enough
-            if (time.time() - self.last_sync) > self.timeout:
-                logging.info("{}: Triggering due to timeout exceeded ({:0.1f} minutes)".format(self.name, (time.time() - self.last_sync) / 60))
+            now = time.time()
+            if (now - self.last_sync) > self.timeout:
+                logging.info("{}: Triggering due to timeout exceeded ({:0.1f} minutes)".format(self.name, (now - self.last_sync) / 60))
                 self.mail_queue.put(self.mail_acct)
-                self.last_sync = time.time()
+                self.last_sync = self.last_print = now
 
 
 #            # Check idle_response. Don't need to trigger offlineimap
 #            # in all cases.
 #            for resp in idle_response:
-#                #print(self.name, idle_response, resp)
-#                #if isinstance(resp[0], (str,unicode)) and resp[0].upper().startswith("IDLE"):
-#                #    continue
-#                #if len(resp) < 2:
-#                #    continue
-#                if len(resp) < 2:
-#                    logging.error("{}: resp is {}".format(self.name, resp))
-#
 #                # Trigger immediately for new mail
 #                # For mail changes (flags, deletion), wait a little for things
 #                # to settle
@@ -190,11 +199,8 @@ class idle_checker(threading.Thread):
 #                    # These responses don't need an offlineimap sync
 #                    #logging.info("{}: No action due to {}".format(self.name, resp[1]))
 #                    pass
-#                else:
-#                    # TODO: Any other cases happen?
-#                    logging.warning("{} UNKNOWN idle response: {}".format(self.name,resp))
-#
 
+        # We're out of the while-True loop
         # Get out of IDLE
         if self.last_idle:
             logging.debug("{}: Finishing IDLE command".format(self.name))
