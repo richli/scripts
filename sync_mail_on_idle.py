@@ -129,31 +129,42 @@ class idle_checker(threading.Thread):
 
             # Check IDLE response
             for sock in readlist:
-                sock_msg = sock.read().decode().strip()
-                if sock_msg.startswith("* OK"):
-                    # The IMAP server is just saying OK once in a while,
-                    # nothing's wrong
-                    # (dovecot seems especially noisy in doing this every few
-                    # minutes)
-                    logging.debug("{}: everything is okay ({})".format(self.name, sock_msg))
-                elif "EXISTS" in sock_msg.split():
-                    # exists: number of messages in mailbox
-                    logging.info("{}: new mail detected ({})".format(self.name, sock_msg))
-                    self.mail_queue.put(self.mail_acct)
-                    self.last_sync = self.last_print = time.time()
-                elif "FETCH" in sock_msg.split():
-                    # fetch: something about the message changed (flags, etc)
-                    logging.info("{}: mail status changed ({})".format(self.name, sock_msg))
-                    self.mail_queue.put(self.mail_acct)
-                    self.last_sync = self.last_print = time.time()
-                elif "EXPUNGE" in sock_msg.split():
-                    # expunge: message deleted (expunged) from mailbox
-                    logging.info("{}: a mail deleted ({})".format(self.name, sock_msg))
-                    self.mail_queue.put(self.mail_acct)
-                    self.last_sync = self.last_print = time.time()
-                else:
-                    logging.error("{}: I don't know how to handle this ({})".format(self.name, sock_msg))
-                    break
+                sock_msg_raw = sock.read().decode().strip()
+                for sock_msg in sock_msg_raw.splitlines():
+                    if sock_msg.startswith("* OK"):
+                        # The IMAP server is just saying OK once in a while,
+                        # nothing's wrong
+                        # (dovecot seems especially noisy in doing this every few
+                        # minutes)
+                        logging.debug("{}: everything is okay ({})".format(self.name, sock_msg))
+                    elif "EXISTS" in sock_msg.split():
+                        # exists: number of messages in mailbox
+                        logging.info("{}: new mail detected ({})".format(self.name, sock_msg))
+                        self.mail_queue.put(self.mail_acct)
+                        self.last_sync = self.last_print = time.time()
+                    elif "RECENT" in sock_msg.split():
+                        # recent: new mail
+                        # NB: it seems dovecot uses "recent" and "exists" and
+                        # gmail uses "exists" only, so I think I can ignore
+                        # recent
+                        logging.info("{}: IGNORING, IS THIS OKAY? ({})".format(self.name, sock_msg))
+                        #logging.info("{}: new mail detected ({})".format(self.name, sock_msg))
+                        #self.mail_queue.put(self.mail_acct)
+                        #self.last_sync = self.last_print = time.time()
+                    elif "FETCH" in sock_msg.split():
+                        # fetch: something about the message changed (flags, etc)
+                        logging.info("{}: mail status changed ({})".format(self.name, sock_msg))
+                        self.mail_queue.put(self.mail_acct)
+                        self.last_sync = self.last_print = time.time()
+                    elif "EXPUNGE" in sock_msg.split():
+                        # expunge: message deleted (expunged) from mailbox
+                        logging.info("{}: mail deleted ({})".format(self.name, sock_msg))
+                        self.mail_queue.put(self.mail_acct)
+                        self.last_sync = self.last_print = time.time()
+                    else:
+                        logging.error("{}: I don't know how to handle this ({})".format(self.name, sock_msg))
+                        self.stop_it = True
+                        break
 
             # Finish IDLE if it's been long enough (28 minutes)
             if time.time() - self.last_idle >= 28*60:
@@ -263,7 +274,7 @@ class idle_actor(threading.Thread):
                 #print(cmd_out)
                 self.last_sync[acct] = now
             else:
-                logging.debug("{}: won't trigger {:0.1f} since it was {} seconds from the last time it triggered".format(self.name, acct, now - acct_time))
+                logging.debug("{}: won't trigger {} since it was {:0.1f} seconds from the last time it triggered".format(self.name, acct, now - acct_time))
 
 
 def main():
@@ -293,7 +304,7 @@ def main():
 
     # Create the consumer thread and its event it watches
     mail_queue = queue.Queue()
-    trigger_thread = idle_actor(mail_queue, "oimap_trigger")
+    trigger_thread = idle_actor(mail_queue, "trigger")
     trigger_thread.start()
 
     # Create a self pipe, it's used as a signal to the producer threads
