@@ -148,14 +148,12 @@ class idle_checker(threading.Thread):
                         self.mail_queue.put(self.mail_acct)
                         self.last_sync = self.last_print = time.time()
                     elif "RECENT" in sock_msg.split():
-                        # recent: new mail
-                        # NB: it seems dovecot uses "recent" and "exists" and
-                        # gmail uses "exists" only, so I think I can ignore
-                        # recent
-                        logging.info("{}: IGNORING, IS THIS OKAY? ({})".format(self.name, sock_msg))
-                        #logging.info("{}: new mail detected ({})".format(self.name, sock_msg))
-                        #self.mail_queue.put(self.mail_acct)
-                        #self.last_sync = self.last_print = time.time()
+                        # recent: new mail, this session is the first to see it
+                        # for mail checking purposes, this is redundant since a
+                        # new mail will trigger both "recent" and "exists"
+                        # (dovecot does this) or "exists" only (gmail doesn't
+                        # support recent)
+                        logging.debug("{}: new mail detected, but ignoring this response ({})".format(self.name, sock_msg))
                     elif "FETCH" in sock_msg.split():
                         # fetch: something about the message changed (flags, etc)
                         logging.info("{}: mail status changed ({})".format(self.name, sock_msg))
@@ -166,6 +164,10 @@ class idle_checker(threading.Thread):
                         logging.info("{}: mail deleted ({})".format(self.name, sock_msg))
                         self.mail_queue.put(self.mail_acct)
                         self.last_sync = self.last_print = time.time()
+                    elif sock_msg.startswith("* BYE"):
+                        logging.warning("{}: Server kicked me out ({})".format(self.name, sock_msg))
+                        self.stop_it = True
+                        break
                     else:
                         logging.error("{}: I don't know how to handle this ({})".format(self.name, sock_msg))
                         self.stop_it = True
@@ -186,35 +188,6 @@ class idle_checker(threading.Thread):
                 logging.info("{}: Triggering due to timeout exceeded ({:0.1f} minutes)".format(self.name, (now - self.last_sync) / 60))
                 self.mail_queue.put(self.mail_acct)
                 self.last_sync = self.last_print = now
-
-
-#            # Check idle_response. Don't need to trigger offlineimap
-#            # in all cases.
-#            for resp in idle_response:
-#                # Trigger immediately for new mail
-#                # For mail changes (flags, deletion), wait a little for things
-#                # to settle
-#                if resp[1] in (u'RECENT', u'EXISTS'):
-#                    # recent: new mail
-#                    # exists: number of messages in mailbox
-#                    # NB: it seems dovecot uses "recent" and gmail uses "exists"
-#                    logging.info("{}: Triggering due to {}".format(self.name, resp[1]))
-#                    idle_actor.accts.append(self.mail_acct)
-#                    self.trigger_event.set()
-#                    self.last_sync = time.time()
-#                elif resp[1] in (u'FETCH', u'EXPUNGE'):
-#                    # fetch: something about the message changed (flags, etc)
-#                    # expunge: message deleted (expunged) from mailbox
-#                    # NB: while dovecot will notify on flag changes using "fetch", gmail does not
-#                    logging.info("{}: Triggering (delayed) due to {}".format(self.name, resp[1]))
-#                    time.sleep(10)
-#                    idle_actor.accts.append(self.mail_acct)
-#                    self.trigger_event.set()
-#                    self.last_sync = time.time()
-#                elif resp[1] in (u'Still here'):
-#                    # These responses don't need an offlineimap sync
-#                    #logging.info("{}: No action due to {}".format(self.name, resp[1]))
-#                    pass
 
         # We're out of the while-True loop
         # Get out of IDLE
@@ -247,7 +220,7 @@ class idle_actor(threading.Thread):
         # ignores subsequent triggers for a time period of remember_time (in
         # seconds). last_sync is a dict that keeps track of the last time each
         # account was synced.
-        self.remember_time = 15  # seconds
+        self.remember_time = 20  # seconds
         self.last_sync = {} 
         logging.info("Spawned {}".format(self.name))
 
@@ -272,8 +245,9 @@ class idle_actor(threading.Thread):
 
             if (now - acct_time) > self.remember_time:
                 # Run offlineimap for the accounts
+                logging.info("Syncing {} at {}".format(acct, time.strftime("%d %b %I:%M:%S")))
                 cmd = ["/usr/bin/offlineimap", "-o", "-a", acct, "-k", "mbnames:enabled=no"]
-                logging.info("Calling {}".format(cmd))
+                logging.debug("Calling {}".format(cmd))
                 # NB: offlineimap actually outputs to stderr, not stdout
                 cmd_out = subprocess.check_output(cmd, stderr=subprocess.STDOUT)
                 #print(cmd_out)
@@ -298,6 +272,7 @@ def main():
 
     logging.basicConfig(
             level=logging.INFO,
+            #level=logging.DEBUG,
             format='%(levelname)s: %(message)s',
             #format='%(asctime)s %(levelname)s: %(message)s',
             #filename='/home/earl/.local/bin/idle_sync.log',
@@ -341,6 +316,8 @@ def main():
                     # The timeout value here doesn't matter so long as it's
                     # not infinite (ie, no arg)
                     thread.join(60) 
+                else:
+                    print("HEY, LISTEN! {} is dead!".format(thread.name))
     except (KeyboardInterrupt, SystemExit):
         logging.debug("Signaling stop_it to the threads")
         trigger_thread.stop()
