@@ -1,0 +1,145 @@
+#!/usr/bin/env bash
+
+# Syncs melange directories with morannon
+
+# I use s3ql to store the files encrypted on ilos. This is done by mounting locally s3ql on top of sshfs.
+
+# Note: I have to log in as root on ilos so that I can set owner/group permissions correctly. Otherwise I'm limited to earl/earl on ilos.
+
+
+##############
+HOST=$(hostname)
+MAILTO=$HOST@dranek.com
+set -o errexit # exits if any statements dont return true
+##############
+
+ilos_sshfs='/mnt/melange/backups/ilos-sshfs'
+ilos_s3ql='/mnt/melange/backups/ilos-s3ql'
+morannon_local='/mnt/melange/backups/morannon'
+
+s3ql_pass="HaHeelDec"
+
+RSYNC='rsync -ha --delete --stats'
+
+##############
+# Helper functions
+print_title() {
+    # $1: What to print
+    echo " "
+    echo "##########"
+    echo "$1"
+    echo "##########"
+}
+
+print_header() {
+    # $1: What to print
+    echo " "
+    echo "##########"
+    echo "$1"
+}
+
+sshfs_mount() {
+    set -x
+    mkdir -p "$ilos_sshfs"
+    #sshfs -o idmap=user -o allow_root -o gid=0 earl@ilos.dranek.com:/home/earl/dranek-bak/ "$ilos_sshfs" || exit 1
+    sshfs -o allow_root root@ilos.dranek.com:/root/dranek-bak/ "$ilos_sshfs" || exit 1
+    set +x
+}
+
+sshfs_umount() {
+    fusermount -u "$ilos_sshfs" && rm -r "$ilos_sshfs"
+}
+
+s3ql_mount() {
+    echo "[ilos]" > /root/.s3ql/authinfo2
+    echo "storage-url: local://$ilos_sshfs" >> /root/.s3ql/authinfo2
+    echo "fs-passphrase: $s3ql_pass" >> /root/.s3ql/authinfo2
+    chmod go-rw /root/.s3ql/authinfo2
+    set -x
+    mkdir -p "$ilos_s3ql"
+    fsck.s3ql local://"$ilos_sshfs"
+    mount.s3ql local://"$ilos_sshfs" "$ilos_s3ql" || exit 1
+    set +x
+}
+
+s3ql_umount() {
+    time umount.s3ql "$ilos_s3ql" && rm -r "$ilos_s3ql"
+}
+
+s3ql_stats() {
+    s3qlstat "$ilos_s3ql"
+}
+
+rsync_morannon() {
+    dirs=('git' 'morannon_logs' 'pictures')
+    for dir in "${dirs[@]}"; do
+        echo "--------------------"
+        echo "rsync-ing $dir to ilos"
+        echo "--------------------"
+        set -x
+        mkdir -p $ilos_s3ql/morannon/"$dir"
+        time $RSYNC $morannon_local/"$dir" $ilos_s3ql/morannon
+        set +x
+    done
+
+    # Obnam backups
+    dir='obn_baks/amonkira'
+    echo "--------------------"
+    echo "rsync-ing $dir to ilos"
+    echo "--------------------"
+    set -x
+    mkdir -p $ilos_s3ql/morannon/$dir
+    time $RSYNC $morannon_local/$dir/ $ilos_s3ql/morannon/obn_baks/amonkira
+    set +x
+    dir='obn_baks/nith'
+    echo "--------------------"
+    echo "rsync-ing $dir to ilos"
+    echo "--------------------"
+    set -x
+    mkdir -p $ilos_s3ql/morannon/$dir
+    time $RSYNC $morannon_local/$dir/ $ilos_s3ql/morannon/obn_baks/nith
+    set +x
+
+    # Leto obnam backup is in a different location
+    dir='/mnt/melange/backups/leto/obn_bak'
+    echo "--------------------"
+    echo "rsync-ing $dir to ilos"
+    echo "--------------------"
+    set -x
+    mkdir -p $ilos_s3ql/morannon/obn_baks/leto/obn_bak
+    time $RSYNC $dir/ $ilos_s3ql/morannon/obn_baks/leto/obn_bak
+    set +x
+}
+
+cleanup() {
+    set +x
+    print_header "Unmounting s3ql"
+    s3ql_umount
+    print_header "Unmounting sshfs"
+    sshfs_umount
+    sed -i 's/\r$//' $LOGFILE; mail -s 'sync leto with ilos' $MAILTO < $LOGFILE && rm -f $LOGFILE
+}
+##############
+
+##############
+# Redirect all output to the logfile (for mailing)
+LOGFILE=$(mktemp)
+exec > $LOGFILE 2>&1
+# Email output upon exit
+trap cleanup EXIT
+##############
+
+print_title "Sync melange with ilos, $HOST, $(date)"
+
+print_header "Mounting sshfs"
+sshfs_mount
+
+print_header "Mounting s3ql"
+s3ql_mount
+
+print_header "Rsyncing morannon backup"
+rsync_morannon
+
+print_header "S3QL stats"
+s3ql_stats
+

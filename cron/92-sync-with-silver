@@ -1,0 +1,143 @@
+#!/usr/bin/env bash
+
+# Syncs melange directories with morannon
+# Can use rsync over an NFS mount, but currently uses rsync/ssh
+
+##############
+HOST=$(hostname)
+MAILTO=$HOST@dranek.com
+set -o errexit # exits if any statements dont return true
+##############
+
+RSYNC='rsync -ha --stats --delete'
+#morannon_remote='/mnt/melange/backups/morannon-remote'
+morannon_remote='morannon:/tmp/mnt/silver'
+morannon_local='/mnt/melange/backups/morannon'
+leto_music='/mnt/melange/music'
+
+##############
+# Helper functions
+print_title() {
+    # $1: What to print
+    echo " "
+    echo "##########"
+    echo "$1"
+    echo "##########"
+    echo " "
+}
+
+print_header() {
+    # $1: What to print
+    echo " "
+    echo "##########"
+    echo "$1"
+    #echo " "
+}
+
+#nfs_mount() {
+#    mkdir $morannon_remote
+#    mount -o nfsvers=3 morannon:/tmp/mnt/silver $morannon_remote
+#    # Check if it's mounted 
+#    if [[ $(stat -f -L -c %T $morannon_remote) != "nfs" ]]; then
+#        echo "ERROR: $morannon_remote not mounted as nfs, exiting"
+#        exit 1
+#    fi
+#}
+#
+#nfs_umount() {
+#    set -x
+#    umount $morannon_remote && rm -r $morannon_remote
+#    set +x
+#}
+
+rsync_morannon_to_leto() {
+    # $1: dirname at morannon:/tmp/mnt/silver
+
+	echo "--------------------"
+	echo "rsync-ing $1 from morannon"
+	echo "--------------------"
+    set -x
+    time $RSYNC $morannon_remote/$1/ $morannon_local/$1
+    set +x
+}
+
+rsync_leto_to_morannon() {
+    # $1: dirname at leto
+    # $2: dirname at morannon:/tmp/mnt/silver
+	echo "--------------------"
+	echo "rsync-ing $1 on leto to $2 on morannon"
+	echo "--------------------"
+    set -x
+    time $RSYNC $1 $2
+    set +x
+}
+
+#rsync_leto_music_to_morannon() {
+#    # $1: array of music dirnames at leto:/mnt/melange/music
+#    for dir in "${1[@]}"; do
+#        echo "--------------------"
+#        echo "rsync-ing leto music: $dir"
+#        echo "--------------------"
+#        set -x
+#        $RSYNC $leto_music/"$dir"/ $morannon_remote/music/"$dir"
+#        set +x
+#    done
+#}
+
+cleanup() {
+    #print_header "Unmounting morannon/silver via nfs"
+    #nfs_umount
+    sed -i 's/\r$//' $LOGFILE; mail -s 'sync melange with morannon' $MAILTO < $LOGFILE && rm -f $LOGFILE
+}
+
+##############
+
+##############
+# Redirect all output to the logfile (for mailing)
+LOGFILE=$(mktemp)
+exec > $LOGFILE 2>&1
+# Email output upon exit
+trap cleanup EXIT
+##############
+
+print_title "Sync melange with silver, $HOST, $(date)"
+
+#print_header "Mounting morannon/silver via nfs"
+#nfs_mount
+
+print_header "One-way sync from morannon to leto"
+dirs=('git' 'morannon_logs' 'pictures' 'obn_baks/amonkira' 'obn_baks/nith')
+for dir in "${dirs[@]}"; do
+    rsync_morannon_to_leto $dir
+done
+
+print_header "One-way sync from leto to morannon"
+## Leto obnam backups
+leto_obn='/mnt/melange/backups/leto/obn_bak'
+leto_obn_morannon="$morannon_remote/obn_baks/leto"
+rsync_leto_to_morannon $leto_obn $leto_obn_morannon
+
+# NB: The below works, but is disabled until I have beets working
+## Leto music
+#echo "--------------------"
+#echo "rsync-ing leto music"
+#echo "--------------------"
+#set -x
+#time $RSYNC --exclude='UNSORTED/classical type stuff/' --exclude='UNSORTED/BIG stuff for later/' --exclude='UNSORTED/REVIEW_all' $leto_music/ $morannon_remote/music
+#set +x
+
+# NB: Because of spaces in the names it makes it a bit difficult to pass the
+# args to a function. So that's why there is no function below. Perhaps an
+# improvement would be to rsync the whole music directory but use filters to
+# exclude the directories I don't care about.
+#dirs=('Classical' 'Soundtracks' 'Electronica' "80's and 90's" "Pop and Such" "UNSORTED/KEEP" "UNSORTED/REVIEW_current")
+#for dir in "${dirs[@]}"; do
+#    echo "--------------------"
+#    echo "rsync-ing leto music: $dir"
+#    echo "--------------------"
+#    echo "TODO: THIS IS DISABLED FOR NOW"
+#    set -x
+#    time $RSYNC --dry-run $leto_music/"$dir"/ $morannon_remote/music/"$dir"
+#    time $RSYNC --delete --dry-run $leto_music/"$dir"/ $morannon_remote/music/"$dir"
+#    set +x
+#done
