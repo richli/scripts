@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 __author__ = 'Rich Li'
-__version__ = 2.3
+__version__ = 2.4
 
 """ Monitors mail folders for changes using IDLE and then runs offlineimap
 
@@ -13,6 +13,9 @@ TODO
 ----
 
 * If a thread gets a network error or otherwise dies, I need to restart it
+* Sometimes I'll get a socket error (seems to be on gmail usually) in a thread
+but no output from it until I kill it. But in the meantime, CPU usage shoots to
+100%.
 
 """
 
@@ -21,6 +24,7 @@ TODO
 # v2.1 2014-01-16: Fix bug where it checked for the initial imap response more
 # v2.2 2014-01-17: Fix bugs with timing out properly
 # v2.3 2014-01-17: Don't trigger the same account too many times too quickly
+# v2.4 2014-03-28: Per-account timeouts
 
 # all these are from stdlib
 import sys, os
@@ -93,6 +97,7 @@ class idle_checker(threading.Thread):
                 msg = "{}: idling at {}".format(self.name, time.strftime("%d %b %I:%M:%S"))
                 if self.timeout:
                     msg += ", {:0.1f} min since last sync".format((now - self.last_sync)/60)
+                    msg += ", at most {:0.1f} min until next sync".format((self.timeout - now + self.last_sync)/60)
                 logging.info(msg)
                 self.last_print = now
 
@@ -317,12 +322,14 @@ def main():
         mail_pass = cfg.get(acct, "pass")
         mail_server = cfg.get(acct, "server")
         mail_folders = cfg.get(acct, "folders")
-        timeout = 10*60 # Check at least once every 10 minutes
+        mail_timeout = cfg.get(acct, "timeout", fallback=10)
+        mail_timeout = 60 * int(mail_timeout) # convert minutes to seconds
 
         for folder_i, folder in enumerate(mail_folders.split(",")):
             thread_name='{}_{}'.format(acct, folder.strip())
             mail_idle = idle_checker(mail_queue, acct, mail_user, mail_pass,
-                    mail_server, folder.strip(), pipe_signal[0], thread_name, timeout)
+                    mail_server, folder.strip(), pipe_signal[0], thread_name,
+                    mail_timeout)
             idle_threads.append(mail_idle)
             mail_idle.start()
 
