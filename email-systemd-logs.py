@@ -3,6 +3,8 @@
 
 Tested with Python 3.4
 
+TODO: Write the last run time to the config file?
+
 The configuration is stored in a yaml file. It goes through each systemd
 service listed and emails the output since the specified time.
 
@@ -24,10 +26,11 @@ services:
 
 """
 __author__ = 'Rich Li'
-__version__ = 0.1
+__version__ = 0.2
 
 # Version history:
 # v0.1 2014-04-05: Started
+# v0.2 2014-04-05: Can specify to only email one service
 
 import sys
 import argparse
@@ -45,9 +48,11 @@ def main():
     # Parse arguments
     #################
     parser = argparse.ArgumentParser(description='Emails systemd logs')
-    parser.add_argument('--config', action='store',
+    parser.add_argument('--only', action='store',
+                        help="Only emails logs for the specified service name")
+    parser.add_argument('--config', '-c', action='store',
                         default='email-systemd-logs.yaml',
-                        help='yaml config file to read')
+                        help='yaml config file (default: %(default)s)')
     parser.add_argument('--show-config', action='store_true',
                         help="Display parsed configuration file")
     parser.add_argument('--no-send', action='store_true',
@@ -68,6 +73,9 @@ def main():
     # Send emails
     #################
     for service in config['services']:
+        if args.only is not None and args.only != service['name']:
+            continue
+
         # Query the journal
         cmd = ["journalctl", "-u", service['name'], "--since",
                service['last_run'], "--no-pager"]
@@ -84,10 +92,10 @@ def main():
         msg_text = ' '.join(cmd) + '\n' + j_out
         msg.set_payload(msg_text)
 
+        # Send via SMTP or just display it
         if args.no_send:
             print(msg)
         else:
-            # Send via SMTP
             tls_context = ssl.create_default_context()
             tls_context.check_hostname = True
             with SMTP(config['mail']['smtp_host'],
