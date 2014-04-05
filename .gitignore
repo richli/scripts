@@ -1,2 +1,5 @@
 # vim swap files
 .*.sw?
+# config files
+idle_mail.ini
+email-systemd-logs.yaml
