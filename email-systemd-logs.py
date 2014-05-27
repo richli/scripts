@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-""" Emails the output of various systemd units from the journal
+"""Emails the output of various systemd units from the journal.
 
 Tested with Python 3.4
 
@@ -32,7 +32,6 @@ __version__ = 0.2
 # v0.1 2014-04-05: Started
 # v0.2 2014-04-05: Can specify to only email one service
 
-import sys
 import argparse
 import subprocess
 import yaml
@@ -44,6 +43,7 @@ import pprint
 
 
 def main():
+    """Main function."""
     #################
     # Parse arguments
     #################
@@ -78,7 +78,7 @@ def main():
 
         # Query the journal
         cmd = ["journalctl", "-u", service['name'], "--since",
-               service['last_run'], "--no-pager"]
+               service['last_run'], "--no-pager", "--output", "cat"]
         j_out = subprocess.check_output(cmd).decode()
 
         # Create the email
@@ -88,7 +88,7 @@ def main():
         msg['From'] = config['mail']['email_from']
         msg['Date'] = email.utils.formatdate(localtime=True)
         msg['Message-ID'] = email.utils.make_msgid()
-        msg['User-Agent'] = sys.argv[0]
+        msg['User-Agent'] = __file__
         msg_text = ' '.join(cmd) + '\n' + j_out
         msg.set_payload(msg_text)
 
