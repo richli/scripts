@@ -3,3 +3,4 @@
 # config files
 idle_mail.ini
 email-systemd-logs.yaml
+journalwatch.json
