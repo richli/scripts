@@ -7,10 +7,11 @@ Inspired by: https://tim.siosm.fr/blog/2014/02/24/journald-log-scanner-python/
 
 """
 __author__ = 'Rich Li'
-__version__ = 0.1
+__version__ = 0.2
 
 # Version history:
 # v0.1 2014-06-14: Started
+# v0.2 2014-07-01: Updated to group output from various services
 
 import argparse
 from datetime import datetime, timedelta
@@ -23,6 +24,7 @@ import ssl
 from smtplib import SMTP
 
 from systemd import journal
+
 
 def main():
     """Main function."""
@@ -52,7 +54,7 @@ def main():
     # Those are for matching dynamically named units:
     user_session = re.compile("user@\d+.service")
     session = re.compile("session-[a-z]?\d+.scope")
-    # sshUnit = re.compile("sshd@[0-9a-f.:]*")
+    ssh_unit = re.compile("sshd@[0-9a-f.:]*")
 
     # Those will match the logged message itself:
     btsync_deverr = re.compile("UPnP: Device error.*")
@@ -60,8 +62,8 @@ def main():
     login_buttons = re.compile("Watching system buttons .*")
     obnam_backup = re.compile("Backed up .*")
     packages_found = re.compile("Packages \((\d+)\).*")
-    # sshSocketStart = re.compile("(Strating|Stopping) OpenSSH Per-Connection Daemon.*")
-    # sshAcceptPublicKey = re.compile("Accepted publickey for (bob|alice).*")
+    # sshSocketStart = re.compile("(Starting|Stopping) OpenSSH Per-Connection Daemon.*")
+    # ssh_pubkey = re.compile("Accepted publickey for (earl|git).*")
     # sshReceivedDisconnect = re.compile("Received disconnect from.*")
     # logindNewSession = re.compile("New session [a-z]?\d+ of user (bob|alice).*")
     # sshdSessionClosed = re.compile(".*session closed for user (bob|alice).*")
@@ -80,11 +82,13 @@ def main():
     j.seek_realtime(yesterday)
 
     mail_content = []
+    service_entries = {key: [] for key in
+                       ('obnam', 'pacupdate', 'timesyncd', 'sshd')}
     obnam_count = 0
     package_count = None
 
     #################
-    # Scan through the journal and filter out anything notable
+    # Scan through the journal, filter out anything notable
     #################
     for entry in j:
         # A log doesn't have a message...? weird
@@ -132,6 +136,59 @@ def main():
 #            elif entry['_SYSTEMD_UNIT'] == "postfix.service":
 #                if postfixHostnameDoesNotResolve.match(entry['MESSAGE']):
 #                    pass
+            # Obnam
+            elif "obnam" in entry['_SYSTEMD_UNIT']:
+                if entry['SYSLOG_IDENTIFIER'] == 'obnam' and obnam_backup.match(entry['MESSAGE']):
+                    obnam_count += 1
+                elif entry['SYSLOG_IDENTIFIER'] == 'du':
+                    obnam_size = entry['MESSAGE'].split()[0]
+
+                service_entries['obnam'].append('U %s %s %s %s[%s]: %s' % (
+                    entry['__REALTIME_TIMESTAMP'].strftime("%a %b %d %I:%m:%S %p"),
+                    entry['PRIORITY'],
+                    entry['_SYSTEMD_UNIT'],
+                    entry.get('SYSLOG_IDENTIFIER', 'UNKNOWN'),
+                    entry['_PID'],
+                    entry['MESSAGE']
+                ))
+
+            # Count packages
+            elif entry['_SYSTEMD_UNIT'] == 'pacupdate.service':
+                match = packages_found.match(entry['MESSAGE'])
+                if match:
+                    package_count = match.group(1)
+
+                service_entries['pacupdate'].append('U %s %s %s %s[%s]: %s' % (
+                    entry['__REALTIME_TIMESTAMP'].strftime("%a %b %d %I:%m:%S %p"),
+                    entry['PRIORITY'],
+                    entry['_SYSTEMD_UNIT'],
+                    entry.get('SYSLOG_IDENTIFIER', 'UNKNOWN'),
+                    entry['_PID'],
+                    entry['MESSAGE']
+                ))
+
+            # timesyncd
+            elif entry['_SYSTEMD_UNIT'] == 'systemd-timesyncd.service':
+                service_entries['timesyncd'].append('U %s %s %s %s[%s]: %s' % (
+                    entry['__REALTIME_TIMESTAMP'].strftime("%a %b %d %I:%m:%S %p"),
+                    entry['PRIORITY'],
+                    entry['_SYSTEMD_UNIT'],
+                    entry.get('SYSLOG_IDENTIFIER', 'UNKNOWN'),
+                    entry['_PID'],
+                    entry['MESSAGE']
+                ))
+
+            # sshd
+            elif ssh_unit.match(entry['_SYSTEMD_UNIT']):
+                service_entries['sshd'].append('U %s %s %s %s[%s]: %s' % (
+                    entry['__REALTIME_TIMESTAMP'].strftime("%a %b %d %I:%m:%S %p"),
+                    entry['PRIORITY'],
+                    entry['_SYSTEMD_UNIT'],
+                    entry.get('SYSLOG_IDENTIFIER', 'UNKNOWN'),
+                    entry['_PID'],
+                    entry['MESSAGE']
+                ))
+
             else:
                 mail_content.append('U %s %s %s %s[%s]: %s' % (
                     entry['__REALTIME_TIMESTAMP'].strftime("%a %b %d %I:%m:%S %p"),
@@ -143,7 +200,8 @@ def main():
                 ))
 
         # With syslog identifier only
-        elif entry['SYSLOG_IDENTIFIER'] in ("systemd", "kernel",
+        elif entry['SYSLOG_IDENTIFIER'] in ("systemd",
+                                            "kernel",
                                             "bluetoothd",
                                             "systemd-sysctl",
                                             "systemd-journald",
@@ -174,25 +232,21 @@ def main():
                 entry['MESSAGE']
             ))
 
-        # Count obnam
-        if '_SYSTEMD_UNIT' in entry and "obnam" in entry['_SYSTEMD_UNIT']:
-            if entry['SYSLOG_IDENTIFIER'] == 'obnam' and obnam_backup.match(entry['MESSAGE']):
-                obnam_count += 1
-            if entry['SYSLOG_IDENTIFIER'] == 'du':
-                obnam_size = entry['MESSAGE'].split()[0]
-
-        # Count packages
-        if '_SYSTEMD_UNIT' in entry and entry['_SYSTEMD_UNIT'] == 'pacupdate.service':
-            match = packages_found.match(entry['MESSAGE'])
-            if match:
-                package_count = match.group(1)
-
     # Create summary message
     mail_summary = "Daily journalwatch\n\n"
-    mail_summary += "obnam ran {} times, repo is {}\n".format(obnam_count, obnam_size)
+    mail_summary += "obnam ran {} times,".format(obnam_count)
+    mail_summary += " repo is {}\n".format(obnam_size)
     if package_count:
         mail_summary += "pacupdate found {} packages to update\n".format(package_count)
-    mail_summary += "\nFiltered log from {} to now follows:\n".format(yesterday)
+
+    for service in ('obnam', 'pacupdate', 'sshd', 'timesyncd'):
+        mail_summary += '\n=====================\n'
+        mail_summary += '{} logs:\n'.format(service)
+        mail_summary += '\n'.join(service_entries[service])
+        mail_summary += '\n'
+
+    mail_summary += '\n=====================\n'
+    mail_summary += "Remaining filtered log from {} to now follows:\n".format(yesterday)
     # TODO: Also count ssh, nginx, dovecot, postfix info (logins passed and failed, etc)
 
     #################
