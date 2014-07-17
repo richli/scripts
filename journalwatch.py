@@ -78,6 +78,7 @@ def main():
     #################
     j = journal.Reader()
     j.log_level(journal.LOG_INFO)
+    # TODO: Find when the last time this was run instead
     yesterday = datetime.now() - timedelta(days=1, minutes=10)
     j.seek_realtime(yesterday)
 
@@ -234,8 +235,10 @@ def main():
 
     # Create summary message
     mail_summary = "Daily journalwatch\n\n"
-    mail_summary += "obnam ran {} times,".format(obnam_count)
-    mail_summary += " repo is {}\n".format(obnam_size)
+    if obnam_count:
+        mail_summary += "obnam ran {} times,".format(obnam_count)
+    if obnam_size:
+        mail_summary += " obnam repo is {}\n".format(obnam_size)
     if package_count:
         mail_summary += "pacupdate found {} packages to update\n".format(package_count)
 
@@ -256,6 +259,7 @@ def main():
     # http://stackoverflow.com/questions/9403265/how-do-i-use-python-3-2-email-module-to-send-unicode-messages-encoded-in-utf-8-w/9509718#9509718
     charset.add_charset('utf-8', charset.QP, charset.QP)
     mail = MIMEText(mail_summary + '\n'.join(mail_content))
+
     mail['Subject'] = config['subject']
     mail['To'] = config['to']
     mail['From'] = config['from']
