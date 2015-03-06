@@ -12,7 +12,7 @@ __version__ = 0.3
 # Version history:
 # v0.1 2014-06-14: Started
 # v0.2 2014-07-01: Updated to group output from various services
-# v0.3 2015-03-06: Switch to attic instead of obnam
+# v0.3 2015-03-06: Switch to attic instead of obnam, group mail-related logs
 
 import argparse
 from datetime import datetime, timedelta
@@ -85,7 +85,7 @@ def main():
 
     mail_content = []
     service_entries = {key: [] for key in
-                       ('attic', 'pacupdate', 'timesyncd', 'sshd')}
+                       ('attic', 'pacupdate', 'mail', 'timesyncd', 'sshd')}
     attic_count = 0
     package_count = None
 
@@ -189,6 +189,39 @@ def main():
                     entry['MESSAGE']
                 ))
 
+            # dovecot
+            elif entry['_SYSTEMD_UNIT'] == 'dovecot.service':
+                service_entries['mail'].append('U %s %s %s %s[%s]: %s' % (
+                    entry['__REALTIME_TIMESTAMP'].strftime("%a %b %d %I:%m:%S %p"),
+                    entry['PRIORITY'],
+                    entry['_SYSTEMD_UNIT'],
+                    entry.get('SYSLOG_IDENTIFIER', 'UNKNOWN'),
+                    entry['_PID'],
+                    entry['MESSAGE']
+                ))
+
+            # postfix
+            elif entry['_SYSTEMD_UNIT'] == 'postfix.service':
+                service_entries['mail'].append('U %s %s %s %s[%s]: %s' % (
+                    entry['__REALTIME_TIMESTAMP'].strftime("%a %b %d %I:%m:%S %p"),
+                    entry['PRIORITY'],
+                    entry['_SYSTEMD_UNIT'],
+                    entry.get('SYSLOG_IDENTIFIER', 'UNKNOWN'),
+                    entry['_PID'],
+                    entry['MESSAGE']
+                ))
+
+            # other mail types
+            elif entry['_SYSTEMD_UNIT'] in ('opendkim.service', 'spamassassin.service'):
+                service_entries['mail'].append('U %s %s %s %s[%s]: %s' % (
+                    entry['__REALTIME_TIMESTAMP'].strftime("%a %b %d %I:%m:%S %p"),
+                    entry['PRIORITY'],
+                    entry['_SYSTEMD_UNIT'],
+                    entry.get('SYSLOG_IDENTIFIER', 'UNKNOWN'),
+                    entry['_PID'],
+                    entry['MESSAGE']
+                ))
+
             else:
                 mail_content.append('U %s %s %s %s[%s]: %s' % (
                     entry['__REALTIME_TIMESTAMP'].strftime("%a %b %d %I:%m:%S %p"),
@@ -235,11 +268,11 @@ def main():
     # Create summary message
     mail_summary = "Daily journalwatch\n\n"
     if attic_count:
-        mail_summary += "attic backed up {} times,".format(attic_count)
+        mail_summary += "attic backed up {} times".format(attic_count)
     if package_count:
         mail_summary += "pacupdate found {} packages to update\n".format(package_count)
 
-    for service in ('attic', 'pacupdate', 'sshd', 'timesyncd'):
+    for service in ('attic', 'pacupdate', 'sshd', 'mail', 'timesyncd'):
         mail_summary += '\n=====================\n'
         mail_summary += '{} logs:\n'.format(service)
         mail_summary += '\n'.join(service_entries[service])
