@@ -7,11 +7,12 @@ Inspired by: https://tim.siosm.fr/blog/2014/02/24/journald-log-scanner-python/
 
 """
 __author__ = 'Rich Li'
-__version__ = 0.2
+__version__ = 0.3
 
 # Version history:
 # v0.1 2014-06-14: Started
 # v0.2 2014-07-01: Updated to group output from various services
+# v0.3 2015-03-06: Switch to attic instead of obnam
 
 import argparse
 from datetime import datetime, timedelta
@@ -60,7 +61,7 @@ def main():
     btsync_deverr = re.compile("UPnP: Device error.*")
     journal_restart = re.compile("Journal (started|stopped)")
     login_buttons = re.compile("Watching system buttons .*")
-    obnam_backup = re.compile("Backed up .*")
+    attic_backup = re.compile("Archive fingerprint: .*")
     packages_found = re.compile("Packages \((\d+)\).*")
     # sshSocketStart = re.compile("(Starting|Stopping) OpenSSH Per-Connection Daemon.*")
     # ssh_pubkey = re.compile("Accepted publickey for (earl|git).*")
@@ -84,8 +85,8 @@ def main():
 
     mail_content = []
     service_entries = {key: [] for key in
-                       ('obnam', 'pacupdate', 'timesyncd', 'sshd')}
-    obnam_count = 0
+                       ('attic', 'pacupdate', 'timesyncd', 'sshd')}
+    attic_count = 0
     package_count = None
 
     #################
@@ -137,14 +138,12 @@ def main():
 #            elif entry['_SYSTEMD_UNIT'] == "postfix.service":
 #                if postfixHostnameDoesNotResolve.match(entry['MESSAGE']):
 #                    pass
-            # Obnam
-            elif "obnam" in entry['_SYSTEMD_UNIT']:
-                if entry['SYSLOG_IDENTIFIER'] == 'obnam' and obnam_backup.match(entry['MESSAGE']):
-                    obnam_count += 1
-                elif entry['SYSLOG_IDENTIFIER'] == 'du':
-                    obnam_size = entry['MESSAGE'].split()[0]
+            # Attic
+            elif "attic" in entry['_SYSTEMD_UNIT']:
+                if attic_backup.match(entry['MESSAGE']):
+                    attic_count += 1
 
-                service_entries['obnam'].append('U %s %s %s %s[%s]: %s' % (
+                service_entries['attic'].append('U %s %s %s %s[%s]: %s' % (
                     entry['__REALTIME_TIMESTAMP'].strftime("%a %b %d %I:%m:%S %p"),
                     entry['PRIORITY'],
                     entry['_SYSTEMD_UNIT'],
@@ -235,14 +234,12 @@ def main():
 
     # Create summary message
     mail_summary = "Daily journalwatch\n\n"
-    if obnam_count:
-        mail_summary += "obnam ran {} times,".format(obnam_count)
-    if obnam_size:
-        mail_summary += " obnam repo is {}\n".format(obnam_size)
+    if attic_count:
+        mail_summary += "attic backed up {} times,".format(attic_count)
     if package_count:
         mail_summary += "pacupdate found {} packages to update\n".format(package_count)
 
-    for service in ('obnam', 'pacupdate', 'sshd', 'timesyncd'):
+    for service in ('attic', 'pacupdate', 'sshd', 'timesyncd'):
         mail_summary += '\n=====================\n'
         mail_summary += '{} logs:\n'.format(service)
         mail_summary += '\n'.join(service_entries[service])
@@ -269,7 +266,6 @@ def main():
     if args.no_send:
         print(mail.as_string())
     else:
-        pass
         tls_context = ssl.create_default_context()
         tls_context.check_hostname = True
         with SMTP(config['smtp_host'],
