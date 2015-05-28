@@ -1,0 +1,26 @@
+#!/usr/bin/env sh
+
+enabled=$(xrandr -q | grep '\*' | wc -l)
+
+outputs=($(xrandr -q | grep ' connected' | cut -d' ' -f1))
+connected=${#outputs[@]}
+
+self_output="LVDS1"
+for o in "${outputs[@]}"; do
+    if [[ "$o" != "$self_output" ]]; then
+        other_output=$o
+    fi
+done
+
+if [[ "$connected" -ne 2 ]]; then
+    echo "Only $connected outputs connected, can't toggle display"
+    exit 1
+fi
+
+if [[ "$enabled" == "1" ]]; then
+    echo "Enabling rotated $other_output monitor to the right of laptop ($self_output)"
+    xrandr --output "$self_output" --primary --auto --pos 0x0 --output "$other_output" --auto --left-of "$self_output" --rotate left
+elif [[ "$enabled" == "2" ]]; then
+    echo "Disabling $other_output output"
+    xrandr --output "$self_output" --auto --output "$other_output" --off
+fi
